@@ -1,0 +1,6 @@
+nflreadpy
+pandas
+polars
+pyarrow
+xgboost
+scikit-learn
