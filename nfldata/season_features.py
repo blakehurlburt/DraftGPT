@@ -503,6 +503,45 @@ def _add_player_metadata(df, seasons):
     return df
 
 
+def _load_starter_set(seasons):
+    """Load depth charts to identify starters (depth_team='1').
+
+    Returns a set of (player_id, season) tuples for players who appeared
+    as a first-team starter at any point during the season.
+    """
+    season_list = list(seasons)
+    print("Loading depth charts...")
+    try:
+        dc = nfl.load_depth_charts(season_list)
+    except Exception as e:
+        print(f"  Warning: Failed to load depth charts: {e}")
+        return set()
+
+    # Filter to offensive skill positions, first team
+    starters = dc.filter(
+        (pl.col("depth_team") == "1")
+        & pl.col("position").is_in(["QB", "RB", "WR", "TE"])
+    )
+
+    # Build set of (gsis_id, season) — player was a starter at any point
+    starter_pairs = set()
+    if "gsis_id" in starters.columns:
+        pairs = (
+            starters.select(["gsis_id", "season"])
+            .unique()
+            .rename({"gsis_id": "player_id"})
+        )
+        for row in pairs.iter_rows():
+            starter_pairs.add((row[0], row[1]))
+
+    print(f"  Identified {len(starter_pairs)} player-season starter entries")
+    return starter_pairs
+
+
+# Minimum games to keep a non-starter in the dataset
+_MIN_GAMES_NON_STARTER = 6
+
+
 def build_season_features(seasons):
     """Build the full season-level feature matrix.
 
@@ -513,11 +552,36 @@ def build_season_features(seasons):
         Polars DataFrame with one row per player-season, containing
         prior-season features and target columns. Only includes seasons
         where prior-season data exists (drops rookies and first appearances).
+
+    Filters out fringe/depth players to improve games-played predictions.
+    A player-season is kept if EITHER:
+      - The player was listed as a depth_team='1' starter that season, OR
+      - The player played 6+ games that season (meaningful contributor)
     """
     print("=== Building Season-Level Features ===")
 
     # Step 1: Aggregate to season level
     season_df = _aggregate_to_season(seasons)
+
+    # Step 1b: Filter to starters and meaningful contributors
+    starter_set = _load_starter_set(seasons)
+    if starter_set:
+        before = season_df.shape[0]
+        # Tag each row as starter or not
+        season_df = season_df.with_columns(
+            pl.struct(["player_id", "season"])
+            .map_elements(
+                lambda row: (row["player_id"], row["season"]) in starter_set,
+                return_dtype=pl.Boolean,
+            )
+            .alias("_is_starter")
+        )
+        # Keep: starters OR players with 6+ games
+        season_df = season_df.filter(
+            pl.col("_is_starter") | (pl.col("games_played") >= _MIN_GAMES_NON_STARTER)
+        )
+        season_df = season_df.drop("_is_starter")
+        print(f"  After starter/contributor filter: {season_df.shape[0]} rows (was {before})")
 
     # Step 2: Build prior-season features
     print("Building prior-season features...")
