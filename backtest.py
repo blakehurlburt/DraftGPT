@@ -1,30 +1,23 @@
 """
 Walk-forward backtest for the season-level fantasy model.
 
-For each test season (2022-2024), trains on all prior seasons and evaluates
-predictions against actuals. Prints per-season accuracy, overall metrics,
-and best/worst predictions for analysis.
+Runs both the standard walk-forward and the two-stage residual-stacking
+variant, then compares results side by side.
 """
 
 from nfldata.season_features import build_season_features
-from nfldata.season_model import walk_forward_eval
+from nfldata.season_model import walk_forward_eval, walk_forward_with_residuals
 
 
-def main():
-    # Build season-level features (2018-2019 provide history, 2020+ are targets)
-    df = build_season_features(range(2018, 2025))
-
-    # Run walk-forward evaluation
-    results = walk_forward_eval(df)
-
-    # Analyze best and worst predictions
+def _print_analysis(results, label):
+    """Print best/worst predictions for a results set."""
     results = results.with_columns(
         (results["pred_total"] - results["actual_total"]).alias("error"),
         (results["pred_total"] - results["actual_total"]).abs().alias("abs_error"),
     )
 
-    print("\n=== Biggest Over-Predictions (model too optimistic) ===")
-    over = results.sort("error", descending=True).head(15)
+    print(f"\n=== {label}: Biggest Over-Predictions ===")
+    over = results.sort("error", descending=True).head(10)
     print(f"{'Player':<28}{'Pos':<5}{'Year':>5}{'Pred':>8}{'Actual':>8}{'Error':>8}")
     print("-" * 62)
     for row in over.iter_rows(named=True):
@@ -32,8 +25,8 @@ def main():
         print(f"{name:<28}{row['position_group']:<5}{row['season']:>5}"
               f"{row['pred_total']:>8.1f}{row['actual_total']:>8.1f}{row['error']:>8.1f}")
 
-    print("\n=== Biggest Under-Predictions (model too pessimistic) ===")
-    under = results.sort("error").head(15)
+    print(f"\n=== {label}: Biggest Under-Predictions ===")
+    under = results.sort("error").head(10)
     print(f"{'Player':<28}{'Pos':<5}{'Year':>5}{'Pred':>8}{'Actual':>8}{'Error':>8}")
     print("-" * 62)
     for row in under.iter_rows(named=True):
@@ -41,14 +34,42 @@ def main():
         print(f"{name:<28}{row['position_group']:<5}{row['season']:>5}"
               f"{row['pred_total']:>8.1f}{row['actual_total']:>8.1f}{row['error']:>8.1f}")
 
-    print("\n=== Most Accurate Predictions ===")
-    accurate = results.sort("abs_error").head(15)
-    print(f"{'Player':<28}{'Pos':<5}{'Year':>5}{'Pred':>8}{'Actual':>8}{'Error':>8}")
-    print("-" * 62)
-    for row in accurate.iter_rows(named=True):
-        name = (row["player_display_name"] or "???")[:26]
-        print(f"{name:<28}{row['position_group']:<5}{row['season']:>5}"
-              f"{row['pred_total']:>8.1f}{row['actual_total']:>8.1f}{row['error']:>8.1f}")
+
+def main():
+    df = build_season_features(range(2018, 2025))
+
+    # --- Standard walk-forward ---
+    print("\n" + "=" * 70)
+    print("  STANDARD WALK-FORWARD (baseline)")
+    print("=" * 70)
+    results_std = walk_forward_eval(df)
+    _print_analysis(results_std, "Standard")
+
+    # --- Two-stage residual walk-forward ---
+    print("\n" + "=" * 70)
+    print("  TWO-STAGE RESIDUAL WALK-FORWARD")
+    print("=" * 70)
+    results_resid, residual_map = walk_forward_with_residuals(df)
+    _print_analysis(results_resid, "Residual")
+
+    # --- Side-by-side comparison ---
+    print("\n" + "=" * 70)
+    print("  COMPARISON: Standard vs Residual-Stacking")
+    print("=" * 70)
+    from sklearn.metrics import r2_score, mean_absolute_error
+    import numpy as np
+
+    for label, res in [("Standard", results_std), ("Residual", results_resid)]:
+        ppg_r2 = r2_score(res["actual_ppg"].to_list(), res["pred_ppg"].to_list())
+        ppg_mae = mean_absolute_error(res["actual_ppg"].to_list(), res["pred_ppg"].to_list())
+        games_r2 = r2_score(res["actual_games"].to_list(), res["pred_games"].to_list())
+        games_mae = mean_absolute_error(res["actual_games"].to_list(), res["pred_games"].to_list())
+        total_r2 = r2_score(res["actual_total"].to_list(), res["pred_total"].to_list())
+        total_mae = mean_absolute_error(res["actual_total"].to_list(), res["pred_total"].to_list())
+        print(f"\n  {label:>10}:")
+        print(f"    PPG   — R²: {ppg_r2:.3f}, MAE: {ppg_mae:.2f}")
+        print(f"    Games — R²: {games_r2:.3f}, MAE: {games_mae:.2f}")
+        print(f"    Total — R²: {total_r2:.3f}, MAE: {total_mae:.2f}")
 
 
 if __name__ == "__main__":

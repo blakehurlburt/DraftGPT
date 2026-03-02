@@ -148,6 +148,163 @@ def walk_forward_eval(df, min_train_seasons=2):
     return results_df
 
 
+def walk_forward_with_residuals(df, min_train_seasons=2):
+    """Two-stage walk-forward: stage 1 generates residuals, stage 2 uses them.
+
+    Stage 1: Normal walk-forward to compute per-player prediction errors.
+    Stage 2: Re-run walk-forward with prior-year residuals as extra features.
+             "How wrong was the model about this player last year?" lets the
+             model correct systematic per-player biases.
+
+    This is a form of stacking with no leakage — each residual comes from
+    a model that never saw the target year.
+
+    Args:
+        df: Polars DataFrame from build_season_features().
+        min_train_seasons: Minimum training seasons required.
+
+    Returns:
+        Tuple of (stage2_results_df, residual_lookup) where residual_lookup
+        maps (player_id, season) → (ppg_residual, games_residual) for use
+        in final model training.
+    """
+    feature_cols = get_season_feature_columns(df)
+    all_seasons = sorted(df["season"].unique().to_list())
+    min_season = min(all_seasons)
+    test_seasons = [s for s in all_seasons if s - min_season >= min_train_seasons]
+
+    # ---- Stage 1: normal walk-forward to collect residuals ----
+    print(f"\n=== Stage 1: Base Walk-Forward (collecting residuals) ===")
+    # {(player_id, season): (ppg_residual, games_residual)}
+    residual_map = {}
+
+    for test_season in test_seasons:
+        train_df = df.filter(pl.col("season") < test_season)
+        test_df = df.filter(pl.col("season") == test_season)
+
+        X_train = train_df.select(feature_cols).to_pandas()
+        X_test = test_df.select(feature_cols).to_pandas()
+
+        ppg_model = _train_xgb(X_train, train_df["target_ppg"].to_pandas(),
+                                X_test, test_df["target_ppg"].to_pandas())
+        games_model = _train_xgb(X_train, train_df["target_games"].to_pandas(),
+                                  X_test, test_df["target_games"].to_pandas())
+
+        pred_ppg = ppg_model.predict(X_test)
+        pred_games = np.clip(games_model.predict(X_test), 0, 17)
+
+        actual_ppg = test_df["target_ppg"].to_list()
+        actual_games = test_df["target_games"].to_list()
+        player_ids = test_df["player_id"].to_list()
+
+        for pid, ap, pp, ag, pg in zip(player_ids, actual_ppg, pred_ppg,
+                                        actual_games, pred_games):
+            residual_map[(pid, test_season)] = (ap - pp, ag - pg)
+
+    print(f"  Collected {len(residual_map)} player-season residuals")
+
+    # ---- Stage 2: walk-forward with residual features ----
+    print(f"\n=== Stage 2: Walk-Forward with Residual Features ===")
+    augmented_feature_cols = feature_cols + ["prior_ppg_residual", "prior_games_residual"]
+
+    all_results = []
+    season_metrics = {"ppg": [], "games": [], "total": []}
+
+    for test_season in test_seasons:
+        train_df = df.filter(pl.col("season") < test_season)
+        test_df = df.filter(pl.col("season") == test_season)
+
+        # Add residual features: for each player, look up their residual
+        # from the PRIOR year's prediction (season - 1)
+        def _get_residuals(df_slice, target_col_idx):
+            """Get prior-year residuals for a set of rows."""
+            pids = df_slice["player_id"].to_list()
+            seasons = df_slice["season"].to_list()
+            ppg_res = []
+            games_res = []
+            for pid, s in zip(pids, seasons):
+                r = residual_map.get((pid, s - 1))
+                if r is not None:
+                    ppg_res.append(r[0])
+                    games_res.append(r[1])
+                else:
+                    ppg_res.append(0.0)  # no prior residual = assume no bias
+                    games_res.append(0.0)
+            return ppg_res, games_res
+
+        train_ppg_res, train_games_res = _get_residuals(train_df, 0)
+        test_ppg_res, test_games_res = _get_residuals(test_df, 0)
+
+        X_train = train_df.select(feature_cols).to_pandas()
+        X_train["prior_ppg_residual"] = train_ppg_res
+        X_train["prior_games_residual"] = train_games_res
+
+        X_test = test_df.select(feature_cols).to_pandas()
+        X_test["prior_ppg_residual"] = test_ppg_res
+        X_test["prior_games_residual"] = test_games_res
+
+        y_train_ppg = train_df["target_ppg"].to_pandas()
+        y_test_ppg = test_df["target_ppg"].to_pandas()
+        y_train_games = train_df["target_games"].to_pandas()
+        y_test_games = test_df["target_games"].to_pandas()
+
+        ppg_model = _train_xgb(X_train, y_train_ppg, X_test, y_test_ppg)
+        pred_ppg = ppg_model.predict(X_test)
+
+        games_model = _train_xgb(X_train, y_train_games, X_test, y_test_games)
+        pred_games = np.clip(games_model.predict(X_test), 0, 17)
+
+        pred_total = pred_ppg * pred_games
+        actual_total = y_test_ppg.values * y_test_games.values
+
+        ppg_m = _eval_metrics(y_test_ppg, pred_ppg)
+        games_m = _eval_metrics(y_test_games, pred_games)
+        total_m = _eval_metrics(actual_total, pred_total)
+
+        print(f"--- Season {test_season} ---")
+        print(f"  Train: {X_train.shape[0]} rows, Test: {X_test.shape[0]} rows")
+        print(f"  PPG   — MAE: {ppg_m['mae']:.2f}, RMSE: {ppg_m['rmse']:.2f}, R²: {ppg_m['r2']:.3f}")
+        print(f"  Games — MAE: {games_m['mae']:.2f}, RMSE: {games_m['rmse']:.2f}, R²: {games_m['r2']:.3f}")
+        print(f"  Total — MAE: {total_m['mae']:.1f}, RMSE: {total_m['rmse']:.1f}, R²: {total_m['r2']:.3f}")
+
+        season_metrics["ppg"].append(ppg_m)
+        season_metrics["games"].append(games_m)
+        season_metrics["total"].append(total_m)
+
+        # Update residual map with stage-2 residuals for future use
+        player_ids = test_df["player_id"].to_list()
+        actual_ppg_vals = y_test_ppg.values
+        actual_games_vals = y_test_games.values
+        for pid, ap, pp, ag, pg in zip(player_ids, actual_ppg_vals, pred_ppg,
+                                        actual_games_vals, pred_games):
+            residual_map[(pid, test_season)] = (ap - pp, ag - pg)
+
+        id_cols = ["player_id", "player_display_name", "position_group", "season"]
+        result = test_df.select(id_cols).with_columns([
+            pl.Series("pred_ppg", pred_ppg.round(2)),
+            pl.Series("actual_ppg", y_test_ppg.values),
+            pl.Series("pred_games", pred_games.round(1)),
+            pl.Series("actual_games", y_test_games.values.astype(float)),
+            pl.Series("pred_total", pred_total.round(1)),
+            pl.Series("actual_total", actual_total.round(1)),
+        ])
+        all_results.append(result)
+
+    results_df = pl.concat(all_results)
+
+    print(f"\n=== Stage 2 Overall Metrics ({len(test_seasons)} seasons) ===")
+    for target_name in ["ppg", "games", "total"]:
+        avg_mae = np.mean([m["mae"] for m in season_metrics[target_name]])
+        avg_r2 = np.mean([m["r2"] for m in season_metrics[target_name]])
+        print(f"  {target_name.upper():>5} — Avg MAE: {avg_mae:.2f}, Avg R²: {avg_r2:.3f}")
+
+    overall_ppg_r2 = r2_score(results_df["actual_ppg"].to_list(), results_df["pred_ppg"].to_list())
+    overall_total_r2 = r2_score(results_df["actual_total"].to_list(), results_df["pred_total"].to_list())
+    print(f"\n  Combined R² — PPG: {overall_ppg_r2:.3f}, Total: {overall_total_r2:.3f}")
+
+    return results_df, residual_map
+
+
 def train_final_model(df):
     """Train on ALL available data for production predictions.
 
