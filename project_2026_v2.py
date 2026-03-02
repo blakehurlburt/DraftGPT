@@ -223,6 +223,29 @@ def _build_projection_features(seasons):
     proj = extended.filter(pl.col("season") == max_season + 1)
     proj = proj.filter(pl.col("prior1_ppg").is_not_null())
 
+    # Metadata join misses projection rows (season=max+1 has no roster data).
+    # Fill from the most recent season's roster data for each player.
+    meta_cols = ["years_exp", "height", "weight", "draft_number", "age"]
+    available_meta = [c for c in meta_cols if c in proj.columns]
+    missing_meta = proj.select("player_id").join(
+        extended.filter(pl.col("season") == max_season)
+        .select(["player_id"] + available_meta)
+        .unique(subset=["player_id"]),
+        on="player_id",
+        how="left",
+    )
+    # Bump years_exp and age by 1 for the projection season
+    if "years_exp" in missing_meta.columns:
+        missing_meta = missing_meta.with_columns(
+            (pl.col("years_exp") + 1).alias("years_exp")
+        )
+    if "age" in missing_meta.columns:
+        missing_meta = missing_meta.with_columns(
+            (pl.col("age") + 1.0).alias("age")
+        )
+    # Overwrite the null metadata columns
+    proj = proj.drop(available_meta).join(missing_meta, on="player_id", how="left")
+
     # Add dummy targets (won't be used, but needed for column compatibility)
     proj = proj.with_columns([
         pl.lit(0.0).alias("target_ppg"),
