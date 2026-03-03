@@ -4,3 +4,9 @@ polars
 pyarrow
 xgboost
 scikit-learn
+numpy
+pytest
+fastapi
+uvicorn
+httpx
+sse-starlette

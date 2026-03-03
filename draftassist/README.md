@@ -18,7 +18,7 @@ pip install fastapi uvicorn httpx sse-starlette
 ## Start the Server
 
 ```
-python scripts/run_draftassist.py
+python run_draftassist.py
 ```
 
 The server starts at **http://localhost:8000**.

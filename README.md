@@ -16,10 +16,10 @@ XGBoost model trained on 7 seasons of nflverse data (2018-2024) to predict weekl
 .venv/bin/python scripts/project_2026.py
 
 # run Monte Carlo draft simulation
-.venv/bin/python scripts/run_draftsim.py --compare
+.venv/bin/python run_draftsim.py --compare
 
 # launch live Sleeper draft assistant
-.venv/bin/python scripts/run_draftassist.py
+.venv/bin/python run_draftassist.py
 ```
 
 ## Project Structure
@@ -55,15 +55,16 @@ XGBoost model trained on 7 seasons of nflverse data (2018-2024) to predict weekl
 │   ├── static/                 # Vanilla HTML/JS/CSS frontend
 │   └── README.md               # Detailed usage guide
 │
-├── scripts/                    # CLI entry points
+├── run_draftsim.py             # Monte Carlo draft simulation CLI
+├── run_draftassist.py          # Launch Sleeper draft assistant server
+│
+├── scripts/                    # Other CLI scripts
 │   ├── train.py                # Train weekly prediction model
 │   ├── backtest.py             # Walk-forward backtest (standard + residual)
 │   ├── project_2026.py         # Weekly-model 2026 rankings
 │   ├── project_2026_v2.py      # Season-model 2026 rankings + CSV export
 │   ├── update_rosters.py       # Fetch rosters from nflverse → data/rosters.csv
-│   ├── main.py                 # Interactive data exploration examples
-│   ├── run_draftsim.py         # Monte Carlo draft simulation CLI
-│   └── run_draftassist.py      # Launch Sleeper draft assistant server
+│   └── main.py                 # Interactive data exploration examples
 │
 ├── data/                       # Data files (projections, ADP, rosters)
 │   ├── projections/            # Per-position and combined projection CSVs
@@ -95,8 +96,8 @@ Loads nflverse data, engineers features, and trains an XGBoost model to predict 
 Monte Carlo snake draft simulator with 5 strategies, ADP-based opponent modeling, and position-aware valuation.
 
 ```bash
-.venv/bin/python scripts/run_draftsim.py --compare    # all 5 strategies
-.venv/bin/python scripts/run_draftsim.py --slot 3 --strategy vona --sims 10000
+.venv/bin/python run_draftsim.py --compare    # all 5 strategies
+.venv/bin/python run_draftsim.py --slot 3 --strategy vona --sims 10000
 ```
 
 ### 3. draftassist — Live Draft Assistant
@@ -105,7 +106,7 @@ Web UI that connects to a real Sleeper draft via polling, shows real-time pick u
 
 ```bash
 pip install fastapi uvicorn httpx sse-starlette
-.venv/bin/python scripts/run_draftassist.py           # http://localhost:8000
+.venv/bin/python run_draftassist.py           # http://localhost:8000
 ```
 
 ## Updating Rosters
