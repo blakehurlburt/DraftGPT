@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Draft Assistant — Sleeper</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Connection Bar -->
+    <header id="connection-bar">
+        <h1>Draft Assistant</h1>
+        <div class="connect-form">
+            <input type="text" id="draft-id" placeholder="Sleeper Draft ID">
+            <input type="number" id="user-slot" placeholder="Your Slot (1-12)" min="1" max="20" value="1">
+            <button id="connect-btn">Connect</button>
+            <span id="connect-status"></span>
+        </div>
+    </header>
+
+    <!-- Status Bar -->
+    <div id="status-bar" class="hidden">
+        <div id="pick-info">
+            <span id="round-display">Round 1</span>
+            <span id="pick-display">Pick 1</span>
+            <span id="picks-until">—</span>
+        </div>
+        <div id="turn-indicator" class="hidden">YOUR TURN</div>
+        <div id="draft-status-badge"></div>
+    </div>
+
+    <main id="main-content" class="hidden">
+        <div class="left-panel">
+            <!-- Recommendations Panel -->
+            <section id="recommendations">
+                <h2>Recommendations</h2>
+                <div id="strategy-tabs">
+                    <button class="tab active" data-strategy="bpa">BPA</button>
+                    <button class="tab" data-strategy="vbd">VBD</button>
+                    <button class="tab" data-strategy="vona">VONA</button>
+                    <button class="tab" data-strategy="zero-rb">Zero-RB</button>
+                    <button class="tab" data-strategy="robust-rb">Robust-RB</button>
+                </div>
+                <table id="rec-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Player</th>
+                            <th>Pos</th>
+                            <th>Team</th>
+                            <th>Proj Pts</th>
+                            <th>VBD</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rec-body">
+                        <tr><td colspan="6" class="empty-msg">Connect to a draft to see recommendations</td></tr>
+                    </tbody>
+                </table>
+            </section>
+        </div>
+
+        <div class="right-panel">
+            <!-- My Roster -->
+            <section id="my-roster">
+                <h2>My Roster</h2>
+                <div id="roster-needs"></div>
+                <table id="roster-table">
+                    <thead>
+                        <tr>
+                            <th>Player</th>
+                            <th>Pos</th>
+                            <th>Team</th>
+                            <th>Proj Pts</th>
+                        </tr>
+                    </thead>
+                    <tbody id="roster-body">
+                        <tr><td colspan="4" class="empty-msg">No picks yet</td></tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <!-- Pick Ticker -->
+            <section id="pick-ticker">
+                <h2>Recent Picks</h2>
+                <ul id="ticker-list"></ul>
+            </section>
+        </div>
+    </main>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

@@ -15,7 +15,7 @@ from pathlib import Path
 from nfldata.features import build_features, get_feature_columns
 from nfldata.model import train_model
 
-ROSTER_PATH = Path(__file__).parent / "rosters.csv"
+ROSTER_PATH = Path(__file__).parent.parent / "data" / "rosters.csv"
 
 
 def get_current_rosters():

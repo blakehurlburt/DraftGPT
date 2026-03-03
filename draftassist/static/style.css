@@ -1,0 +1,268 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f1923;
+    color: #e0e6ed;
+    min-height: 100vh;
+}
+
+/* Connection Bar */
+#connection-bar {
+    background: #1a2733;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #2d3d4f;
+}
+
+#connection-bar h1 {
+    font-size: 18px;
+    color: #4fc3f7;
+    font-weight: 600;
+}
+
+.connect-form {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.connect-form input {
+    background: #0f1923;
+    border: 1px solid #2d3d4f;
+    color: #e0e6ed;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+#draft-id { width: 240px; }
+#user-slot { width: 140px; }
+
+#connect-btn {
+    background: #4fc3f7;
+    color: #0f1923;
+    border: none;
+    padding: 6px 20px;
+    border-radius: 4px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+#connect-btn:hover { background: #81d4fa; }
+#connect-btn:disabled { background: #2d3d4f; color: #6b7c8d; cursor: default; }
+
+#connect-status {
+    font-size: 13px;
+    color: #6b7c8d;
+    margin-left: 8px;
+}
+
+/* Status Bar */
+#status-bar {
+    background: #1a2733;
+    padding: 10px 24px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    border-bottom: 2px solid #2d3d4f;
+}
+
+#status-bar.hidden { display: none; }
+
+#pick-info {
+    display: flex;
+    gap: 16px;
+    font-size: 15px;
+}
+
+#pick-info span {
+    color: #8899aa;
+}
+
+#turn-indicator {
+    background: #00e676;
+    color: #0f1923;
+    padding: 4px 16px;
+    border-radius: 4px;
+    font-weight: 700;
+    font-size: 14px;
+    animation: pulse 1.2s ease-in-out infinite;
+}
+
+#turn-indicator.hidden { display: none; }
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+#draft-status-badge {
+    margin-left: auto;
+    font-size: 12px;
+    color: #6b7c8d;
+    text-transform: uppercase;
+}
+
+/* Main Layout */
+main {
+    display: flex;
+    padding: 16px;
+    gap: 16px;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+main.hidden { display: none; }
+
+.left-panel { flex: 3; min-width: 0; }
+.right-panel { flex: 2; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+
+/* Sections */
+section {
+    background: #1a2733;
+    border-radius: 8px;
+    padding: 16px;
+    border: 1px solid #2d3d4f;
+}
+
+section h2 {
+    font-size: 14px;
+    color: #4fc3f7;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+}
+
+/* Strategy Tabs */
+#strategy-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 12px;
+}
+
+.tab {
+    background: #0f1923;
+    color: #8899aa;
+    border: 1px solid #2d3d4f;
+    padding: 6px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.tab:hover { border-color: #4fc3f7; color: #e0e6ed; }
+
+.tab.active {
+    background: #4fc3f7;
+    color: #0f1923;
+    border-color: #4fc3f7;
+    font-weight: 600;
+}
+
+/* Tables */
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th {
+    text-align: left;
+    padding: 8px 10px;
+    font-size: 11px;
+    text-transform: uppercase;
+    color: #6b7c8d;
+    border-bottom: 1px solid #2d3d4f;
+}
+
+td {
+    padding: 8px 10px;
+    font-size: 14px;
+    border-bottom: 1px solid #1e2d3d;
+}
+
+tr:hover td { background: rgba(79, 195, 247, 0.05); }
+
+.empty-msg {
+    text-align: center;
+    color: #4a5a6a;
+    padding: 24px;
+    font-style: italic;
+}
+
+/* Position badges */
+.pos-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.pos-QB { background: #e91e63; color: white; }
+.pos-RB { background: #4caf50; color: white; }
+.pos-WR { background: #2196f3; color: white; }
+.pos-TE { background: #ff9800; color: white; }
+
+/* Roster needs */
+#roster-needs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.need-chip {
+    background: #0f1923;
+    border: 1px solid #2d3d4f;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    color: #8899aa;
+}
+
+.need-chip.urgent {
+    border-color: #ff5252;
+    color: #ff5252;
+}
+
+/* Pick Ticker */
+#ticker-list {
+    list-style: none;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+#ticker-list li {
+    padding: 6px 10px;
+    border-bottom: 1px solid #1e2d3d;
+    font-size: 13px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+#ticker-list li .pick-num {
+    color: #4a5a6a;
+    font-size: 11px;
+    min-width: 30px;
+}
+
+#ticker-list li.user-pick {
+    background: rgba(79, 195, 247, 0.1);
+    border-left: 3px solid #4fc3f7;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+    main { flex-direction: column; }
+    .left-panel, .right-panel { flex: 1; }
+}

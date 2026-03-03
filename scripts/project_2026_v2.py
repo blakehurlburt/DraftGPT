@@ -12,8 +12,8 @@ from pathlib import Path
 from nfldata.season_features import build_season_features, get_season_feature_columns
 from nfldata.season_model import train_final_model, project_season
 
-ROSTER_PATH = Path(__file__).parent / "rosters.csv"
-OUTPUT_DIR = Path(__file__).parent / "projections"
+ROSTER_PATH = Path(__file__).parent.parent / "data" / "rosters.csv"
+OUTPUT_DIR = Path(__file__).parent.parent / "data" / "projections"
 
 
 def get_current_rosters():

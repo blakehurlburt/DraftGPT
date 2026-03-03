@@ -15,7 +15,7 @@ from pathlib import Path
 import polars as pl
 import nflreadpy as nfl
 
-ROSTER_PATH = Path(__file__).parent / "rosters.csv"
+ROSTER_PATH = Path(__file__).parent.parent / "data" / "rosters.csv"
 HEADER_COMMENT = """# Roster overrides for 2026 projections (auto-generated + manual edits)
 # Edit this file to reflect trades, cuts, signings, and retirements.
 # Columns: player_name, team, position, status

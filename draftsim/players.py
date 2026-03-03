@@ -1,0 +1,67 @@
+"""Player pool loading from projections CSV."""
+
+from __future__ import annotations
+
+import csv
+from dataclasses import dataclass
+from pathlib import Path
+
+
+@dataclass
+class Player:
+    """A projected player available for drafting."""
+
+    name: str
+    position: str  # QB, RB, WR, TE
+    team: str
+    projected_ppg: float
+    projected_games: float
+    projected_total: float
+    pos_rank: int
+    sleeper_id: str = ""
+
+    def __repr__(self) -> str:
+        return f"{self.name} ({self.position}{self.pos_rank}, {self.team}) {self.projected_total:.0f}pts"
+
+
+def load_players(
+    projections_path: str | Path = "data/projections/all_projections.csv",
+    min_total: float = 20.0,
+) -> list[Player]:
+    """Load player projections from CSV into Player objects.
+
+    Args:
+        projections_path: Path to all_projections.csv
+        min_total: Minimum projected total points to include
+
+    Returns:
+        List of Player objects sorted by projected_total descending
+    """
+    players = []
+    path = Path(projections_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Projections file not found: {path}")
+
+    with open(path, newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            total = float(row["projected_total"])
+            if total < min_total:
+                continue
+            position = row["position_group"]
+            if position not in ("QB", "RB", "WR", "TE"):
+                continue
+            players.append(
+                Player(
+                    name=row["player_display_name"],
+                    position=position,
+                    team=row.get("current_team", ""),
+                    projected_ppg=float(row["projected_ppg"]),
+                    projected_games=float(row["projected_games"]),
+                    projected_total=total,
+                    pos_rank=int(row["pos_rank"]),
+                )
+            )
+
+    players.sort(key=lambda p: p.projected_total, reverse=True)
+    return players
