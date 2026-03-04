@@ -314,12 +314,28 @@
         }
     }
 
+    function saveConnection(draftId, slot) {
+        try {
+            localStorage.setItem("draftassist", JSON.stringify({
+                draft_id: draftId, slot: slot, session_id: sessionId,
+            }));
+        } catch (_) { /* private browsing */ }
+    }
+
+    function loadConnection() {
+        try {
+            const raw = localStorage.getItem("draftassist");
+            return raw ? JSON.parse(raw) : null;
+        } catch (_) { return null; }
+    }
+
     function showConnectedUI(draftId, slot, data) {
         const url = new URL(window.location);
         url.searchParams.set("draft_id", draftId);
         url.searchParams.set("slot", slot);
         url.searchParams.set("session_id", sessionId);
         window.history.replaceState({}, "", url);
+        saveConnection(draftId, slot);
 
         welcomeScreen.classList.add("hidden");
         connectionBar.classList.remove("hidden");
@@ -560,12 +576,23 @@
         }
     }
 
-    // Auto-reconnect: check URL params on page load
+    // Auto-reconnect: check URL params first, then localStorage
     (function autoConnect() {
         const params = new URLSearchParams(window.location.search);
-        const draftId = params.get("draft_id");
-        const slot = params.get("slot");
-        const savedSessionId = params.get("session_id");
+        let draftId = params.get("draft_id");
+        let slot = params.get("slot");
+        let savedSessionId = params.get("session_id");
+
+        // Fall back to localStorage if URL params are missing
+        if (!draftId || !slot) {
+            const saved = loadConnection();
+            if (saved) {
+                draftId = saved.draft_id;
+                slot = saved.slot;
+                savedSessionId = saved.session_id;
+            }
+        }
+
         if (draftId && slot) {
             draftIdInput.value = draftId;
             userSlotInput.value = slot;
