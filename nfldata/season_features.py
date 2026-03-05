@@ -943,8 +943,8 @@ def build_season_features(seasons):
         | (pl.col("is_rookie") == 1.0)
     )
 
-    # Drop seasons before 2012 as targets (need 2 prior seasons for lookback)
-    df = df.filter(pl.col("season") >= 2012)
+    # Drop seasons before 2011 as targets (need 2 prior seasons for lookback)
+    df = df.filter(pl.col("season") >= 2011)
 
     # Define feature columns (everything that's not an ID, target, or raw current-season stat)
     print(f"  Final dataset: {df.shape[0]} rows, {df.shape[1]} cols")

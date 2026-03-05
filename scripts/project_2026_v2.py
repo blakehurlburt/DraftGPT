@@ -68,7 +68,7 @@ def main():
     # We include 2026 in the range so that players with 2025 data get a "2026 row"
     # with prior-season features from 2025. But 2026 actuals won't exist yet.
     print("Building season features (2010-2025)...")
-    df = build_season_features(range(2010, 2026))
+    df = build_season_features(range(2009, 2026))
 
     # Step 2: Run walk-forward eval first to see model quality
     print("\n--- Walk-Forward Evaluation (for reference) ---")
@@ -111,7 +111,7 @@ def main():
 
     # Rebuild with 2025 as the most recent season to project from
     print("\nBuilding projection features...")
-    proj_df = _build_projection_features(range(2010, 2026), rosters=rosters)
+    proj_df = _build_projection_features(range(2009, 2026), rosters=rosters)
 
     # Step 6: Project (with floor/median/ceiling)
     results = project_season(ppg_model, games_model, proj_df, quantile_models=quantile_models)
