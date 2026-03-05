@@ -522,6 +522,94 @@ def _add_player_metadata(df, seasons):
     return df
 
 
+def _add_combine_draft_features(df):
+    """Step 4b: Add combine athleticism, draft round, and college conference.
+
+    These features are static per player (not per season), so they are joined
+    on player_id only. Especially valuable for rookie projections where
+    prior-season NFL stats are unavailable.
+    """
+    print("Loading combine/draft/college features...")
+
+    # --- Combine athleticism ---
+    combine = nfl.load_combine()
+    combine_cols = ["pfr_id", "forty", "bench", "vertical", "broad_jump", "cone", "shuttle"]
+    available_combine = [c for c in combine_cols if c in combine.columns]
+    combine = combine.select(available_combine).drop_nulls(subset=["pfr_id"]).unique(subset=["pfr_id"])
+
+    # Rename to avoid collisions
+    rename_map = {c: f"combine_{c}" for c in available_combine if c != "pfr_id"}
+    combine = combine.rename(rename_map)
+
+    # Bridge pfr_id -> gsis_id via load_players()
+    players = nfl.load_players()
+    bridge = (
+        players.select(["gsis_id", "pfr_id"])
+        .drop_nulls()
+        .unique(subset=["pfr_id"])
+        .rename({"gsis_id": "player_id"})
+    )
+    combine = combine.join(bridge, on="pfr_id", how="inner").drop("pfr_id")
+    print(f"  Combine: {combine.shape[0]} players matched to gsis_id")
+
+    # --- Draft round ---
+    draft = nfl.load_draft_picks()
+    draft = (
+        draft.select(["gsis_id", "round"])
+        .drop_nulls(subset=["gsis_id"])
+        .unique(subset=["gsis_id"])
+        .rename({"gsis_id": "player_id", "round": "draft_round"})
+    )
+    # Cast to float for XGBoost compatibility
+    if draft["draft_round"].dtype != pl.Float64:
+        draft = draft.with_columns(pl.col("draft_round").cast(pl.Float64, strict=False))
+
+    # --- College conference ---
+    conf = (
+        players.select(["gsis_id", "college_conference"])
+        .drop_nulls()
+        .unique(subset=["gsis_id"])
+        .rename({"gsis_id": "player_id"})
+    )
+    # Encode top conferences as integers, rest as 0
+    top_conferences = {
+        "Southeastern Conference": 1,
+        "Big Ten Conference": 2,
+        "Atlantic Coast Conference": 3,
+        "Pacific Twelve Conference": 4,
+        "Big Twelve Conference": 5,
+        "American Athletic Conference": 6,
+    }
+    conf = conf.with_columns(
+        pl.col("college_conference")
+        .replace_strict(top_conferences, default=0)
+        .cast(pl.Float64)
+        .alias("college_conf_code")
+    ).drop("college_conference")
+
+    # --- Join all to main df ---
+    df = df.join(combine, on="player_id", how="left")
+    df = df.join(draft, on="player_id", how="left")
+    df = df.join(conf, on="player_id", how="left")
+
+    # --- is_rookie flag ---
+    if "years_exp" in df.columns:
+        df = df.with_columns(
+            pl.when(pl.col("years_exp") == 0)
+            .then(1.0)
+            .otherwise(0.0)
+            .alias("is_rookie")
+        )
+    else:
+        df = df.with_columns(pl.lit(0.0).alias("is_rookie"))
+
+    n_combine = df.filter(pl.col("combine_forty").is_not_null()).shape[0]
+    n_rookies = df.filter(pl.col("is_rookie") == 1.0).shape[0]
+    print(f"  {n_combine} rows with combine data, {n_rookies} rookie rows")
+
+    return df
+
+
 def _add_roster_context_features(df, seasons):
     """Step 5: Add roster-change and team-context features.
 
@@ -836,6 +924,9 @@ def build_season_features(seasons):
     # Step 4: Add player metadata
     df = _add_player_metadata(df, seasons)
 
+    # Step 4b: Add combine/draft/college features
+    df = _add_combine_draft_features(df)
+
     # Step 5: Add roster context features
     df = _add_roster_context_features(df, seasons)
 
@@ -846,8 +937,11 @@ def build_season_features(seasons):
         (pl.col("ppg") * pl.col("games_played")).alias("target_total"),
     ])
 
-    # Drop rows without prior-season data (first appearance for each player)
-    df = df.filter(pl.col("prior1_ppg").is_not_null())
+    # Keep rows with prior-season data OR rookies (who have combine/draft features instead)
+    df = df.filter(
+        pl.col("prior1_ppg").is_not_null()
+        | (pl.col("is_rookie") == 1.0)
+    )
 
     # Drop seasons before 2017 as targets (need 2 prior seasons for lookback)
     df = df.filter(pl.col("season") >= 2017)
@@ -864,7 +958,7 @@ def get_season_feature_columns(df):
     drop_cols = {
         # IDs and non-features
         "player_id", "player_display_name", "position_group", "season", "team",
-        "adjustment_ppg",
+        "adjustment_ppg", "college_conference",
         # Current-season raw stats (these are targets or leakage)
         "ppg", "pass_ypg", "rush_ypg", "rec_ypg", "tgt_pg", "carries_pg",
         "rec_pg", "pass_td_pg", "rush_td_pg", "rec_td_pg",
@@ -897,4 +991,4 @@ def get_season_feature_columns(df):
         # Data quality
         "inj_has_major",            # only 16 positives out of 2928 rows
     }
-    return [c for c in df.columns if c not in drop_cols]
+    return sorted(c for c in df.columns if c not in drop_cols)

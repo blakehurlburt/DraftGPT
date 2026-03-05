@@ -234,6 +234,7 @@ def _build_projection_features(seasons, rosters=None):
     from nfldata.season_features import (
         _aggregate_to_season, _add_injury_features, _add_player_metadata,
         _add_roster_context_features, _build_prior_features,
+        _add_combine_draft_features,
     )
 
     # Get season-level aggregates
@@ -268,8 +269,56 @@ def _build_projection_features(seasons, rosters=None):
             pl.col("team").fill_null(pl.col("_fallback_team"))
         ).drop("_fallback_team")
 
-    # Append dummy rows and rebuild prior features
-    extended = pl.concat([season_df, dummy], how="diagonal")
+    # --- Add rookie rows from draft picks for the projection year ---
+    proj_year = max_season + 1
+    try:
+        draft_picks = nfl.load_draft_picks([proj_year])
+        # Filter to offensive skill positions
+        skill_positions = {"QB", "RB", "WR", "TE", "HB", "FB"}
+        draft_picks = draft_picks.filter(
+            pl.col("position").is_in(skill_positions)
+            | pl.col("category").str.contains("(?i)offense")
+        )
+        draft_picks = draft_picks.filter(pl.col("gsis_id").is_not_null())
+
+        # Map draft position to our position_group
+        pos_map = {"QB": "QB", "RB": "RB", "HB": "RB", "FB": "RB", "WR": "WR", "TE": "TE"}
+        draft_picks = draft_picks.with_columns(
+            pl.col("position").replace_strict(pos_map, default=None).alias("position_group")
+        ).filter(pl.col("position_group").is_not_null())
+
+        # Get display names from load_players()
+        players_df = nfl.load_players()
+        name_map = (
+            players_df.select(["gsis_id", "display_name"])
+            .drop_nulls()
+            .unique(subset=["gsis_id"])
+        )
+        rookie_rows = (
+            draft_picks.select([
+                pl.col("gsis_id").alias("player_id"),
+                pl.lit(proj_year).alias("season"),
+                pl.col("team"),
+                pl.col("position_group"),
+            ])
+            .join(name_map.rename({"gsis_id": "player_id", "display_name": "player_display_name"}),
+                  on="player_id", how="left")
+        )
+
+        # Exclude any rookies already in the dataset (shouldn't happen, but safety check)
+        existing_ids = set(season_df["player_id"].unique().to_list())
+        rookie_rows = rookie_rows.filter(~pl.col("player_id").is_in(list(existing_ids)))
+
+        print(f"  Adding {rookie_rows.shape[0]} rookies from {proj_year} draft")
+    except Exception as e:
+        print(f"  No {proj_year} draft data available ({e}), skipping rookies")
+        rookie_rows = None
+
+    # Append dummy rows (and rookies) and rebuild prior features
+    parts = [season_df, dummy]
+    if rookie_rows is not None and rookie_rows.shape[0] > 0:
+        parts.append(rookie_rows)
+    extended = pl.concat(parts, how="diagonal")
     extended = extended.sort(["player_id", "season"])
 
     # Rebuild prior-season features
@@ -278,11 +327,16 @@ def _build_projection_features(seasons, rosters=None):
     # Add injury, metadata, and roster context features
     extended = _add_injury_features(extended, seasons)
     extended = _add_player_metadata(extended, seasons)
+    extended = _add_combine_draft_features(extended)
     extended = _add_roster_context_features(extended, seasons)
 
     # Filter to the projection rows only
-    proj = extended.filter(pl.col("season") == max_season + 1)
-    proj = proj.filter(pl.col("prior1_ppg").is_not_null())
+    proj = extended.filter(pl.col("season") == proj_year)
+    # Keep veterans (have prior stats) AND rookies (have combine/draft features)
+    proj = proj.filter(
+        pl.col("prior1_ppg").is_not_null()
+        | (pl.col("is_rookie") == 1.0)
+    )
 
     # Metadata join misses projection rows (season=max+1 has no roster data).
     # Fill from the most recent season's roster data for each player.
@@ -306,6 +360,34 @@ def _build_projection_features(seasons, rosters=None):
         )
     # Overwrite the null metadata columns
     proj = proj.drop(available_meta).join(missing_meta, on="player_id", how="left")
+
+    # For rookies, fill metadata from load_players() since they have no prior roster entry
+    if rookie_rows is not None and rookie_rows.shape[0] > 0:
+        players_meta = nfl.load_players()
+        rookie_meta = (
+            players_meta.select(["gsis_id", "height", "weight"])
+            .drop_nulls(subset=["gsis_id"])
+            .unique(subset=["gsis_id"])
+            .rename({"gsis_id": "player_id"})
+        )
+        if "height" in rookie_meta.columns and rookie_meta["height"].dtype != pl.Float64:
+            rookie_meta = rookie_meta.with_columns(pl.col("height").cast(pl.Float64, strict=False))
+        # Fill nulls for rookies only
+        proj = proj.join(
+            rookie_meta.rename({"height": "_rk_height", "weight": "_rk_weight"}),
+            on="player_id", how="left"
+        )
+        proj = proj.with_columns([
+            pl.col("height").fill_null(pl.col("_rk_height")),
+            pl.col("weight").fill_null(pl.col("_rk_weight")),
+        ]).drop(["_rk_height", "_rk_weight"])
+        # Set years_exp = 0 for rookies
+        proj = proj.with_columns(
+            pl.when(pl.col("is_rookie") == 1.0)
+            .then(0)
+            .otherwise(pl.col("years_exp"))
+            .alias("years_exp")
+        )
 
     # Add manual adjustments from rosters if available
     if rosters is not None and "adjustment_ppg" in rosters.columns:
