@@ -382,6 +382,15 @@ def project_season(ppg_model, games_model, features_df):
 
     pred_ppg = ppg_model.predict(X)
     pred_games = np.clip(games_model.predict(X), 0, 17)
+
+    # Apply manual PPG adjustments if present
+    if "adjustment_ppg" in features_df.columns:
+        adj = features_df["adjustment_ppg"].fill_null(0.0).to_numpy()
+        nonzero = np.count_nonzero(adj)
+        if nonzero > 0:
+            print(f"  Applying {nonzero} manual PPG adjustment(s)")
+            pred_ppg = pred_ppg + adj
+
     pred_total = pred_ppg * pred_games
 
     id_cols = ["player_id", "player_display_name", "position_group"]

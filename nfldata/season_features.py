@@ -10,7 +10,7 @@ import polars as pl
 import nflreadpy as nfl
 
 # Maximum regular-season games (17 since 2021, 16 before)
-MAX_GAMES = {s: 17 if s >= 2021 else 16 for s in range(2018, 2030)}
+MAX_GAMES = {s: 17 if s >= 2021 else 16 for s in range(2012, 2030)}
 
 # ---------------------------------------------------------------------------
 # Injury classification system
@@ -204,6 +204,7 @@ def _aggregate_to_season(seasons):
     id_exprs = [
         pl.col("player_display_name").first().alias("player_display_name"),
         pl.col("position_group").first().alias("position_group"),
+        pl.col("team").last().alias("team"),  # end-of-season team assignment
     ]
 
     # Per-game means
@@ -484,9 +485,11 @@ def _add_player_metadata(df, seasons):
     rosters = rosters.select(available).unique(subset=["gsis_id", "season"])
     rosters = rosters.rename({"gsis_id": "player_id"})
 
-    # Ensure height is numeric
+    # Ensure numeric columns are properly typed (older seasons may have strings)
     if "height" in rosters.columns and rosters["height"].dtype != pl.Float64:
         rosters = rosters.with_columns(pl.col("height").cast(pl.Float64, strict=False))
+    if "draft_number" in rosters.columns and rosters["draft_number"].dtype != pl.Float64:
+        rosters = rosters.with_columns(pl.col("draft_number").cast(pl.Float64, strict=False))
 
     # Compute age if birth_date available
     if "birth_date" in rosters.columns:
@@ -499,6 +502,225 @@ def _add_player_metadata(df, seasons):
         rosters = rosters.drop("birth_date")
 
     df = df.join(rosters, on=["player_id", "season"], how="left")
+
+    return df
+
+
+def _add_roster_context_features(df, seasons):
+    """Step 5: Add roster-change and team-context features.
+
+    Captures team changes, offensive environment, positional competition
+    shifts, and QB changes to help the model account for roster turnover.
+    """
+    season_list = list(seasons)
+    print("Building roster context features...")
+
+    # --- 5a: changed_team (binary: player's team differs from prior season) ---
+    df = df.sort(["player_id", "season"])
+    df = df.with_columns(
+        pl.col("team").shift(1).over("player_id").alias("_prior_team")
+    )
+    df = df.with_columns(
+        pl.when(pl.col("_prior_team").is_null())
+        .then(0.0)
+        .when(pl.col("team") != pl.col("_prior_team"))
+        .then(1.0)
+        .otherwise(0.0)
+        .alias("changed_team")
+    )
+
+    # --- 5b: Team offensive context (from team stats, prior season) ---
+    try:
+        ts = nfl.load_team_stats(season_list)
+        # Filter to regular season
+        if "season_type" in ts.columns:
+            ts = ts.filter(pl.col("season_type") == "REG")
+
+        # Aggregate to per-team-season means
+        team_off = (
+            ts.group_by(["team", "season"])
+            .agg([
+                pl.col("passing_yards").mean().alias("team_pass_ypg"),
+                pl.col("rushing_yards").mean().alias("team_rush_ypg"),
+                pl.col("receptions").mean().alias("team_rec_pg"),
+                (pl.col("passing_tds") + pl.col("rushing_tds")).mean().alias("team_td_pg"),
+            ])
+        )
+
+        # These are PRIOR-season team stats, so shift season by +1
+        # Then join on the player's CURRENT team — this means:
+        # - For players who stayed: their team's prior-year volume
+        # - For players who changed: their NEW team's prior-year volume
+        team_off = team_off.with_columns(
+            (pl.col("season") + 1).cast(pl.Int32).alias("season")
+        )
+        team_off = team_off.rename({
+            "team_pass_ypg": "new_team_pass_ypg",
+            "team_rush_ypg": "new_team_rush_ypg",
+            "team_rec_pg": "new_team_rec_pg",
+            "team_td_pg": "new_team_td_pg",
+        })
+
+        df = df.join(team_off, on=["team", "season"], how="left")
+        print("  Added team offensive context features")
+    except Exception as e:
+        print(f"  Warning: Failed to load team stats: {e}")
+        for col in ["new_team_pass_ypg", "new_team_rush_ypg", "new_team_rec_pg",
+                     "new_team_td_pg"]:
+            df = df.with_columns(pl.lit(None).cast(pl.Float64).alias(col))
+
+    # --- 5c: Positional competition features ---
+    # Compare rosters at each position between consecutive seasons
+    # to find departed and arriving players
+    roster_by_team = (
+        df.select(["player_id", "team", "season", "position_group", "ppg"])
+        .filter(pl.col("ppg").is_not_null())
+    )
+
+    # For each team-season-position, build the set of player_ids
+    # Departures: players at position P on team T in season S-1, not on team T in season S
+    # Arrivals: players at position P on team T in season S, not on team T in season S-1
+    pos_opp_rows = []
+    for season in sorted(df["season"].unique().to_list()):
+        prev_season = season - 1
+        curr = roster_by_team.filter(pl.col("season") == season)
+        prev = roster_by_team.filter(pl.col("season") == prev_season)
+
+        if prev.height == 0 or curr.height == 0:
+            continue
+
+        for team in curr["team"].unique().to_list():
+            if team is None:
+                continue
+            for pos in ["QB", "RB", "WR", "TE"]:
+                # Players at this position on this team last year
+                prev_players = set(
+                    prev.filter(
+                        (pl.col("team") == team) & (pl.col("position_group") == pos)
+                    )["player_id"].to_list()
+                )
+                # Players at this position on this team this year
+                curr_players = set(
+                    curr.filter(
+                        (pl.col("team") == team) & (pl.col("position_group") == pos)
+                    )["player_id"].to_list()
+                )
+
+                departed = prev_players - curr_players
+                arrived = curr_players - prev_players
+
+                # Sum PPG of departed players (from their prior-season stats)
+                vacated = 0.0
+                if departed:
+                    dep_ppg = prev.filter(
+                        pl.col("player_id").is_in(list(departed))
+                        & (pl.col("team") == team)
+                        & (pl.col("position_group") == pos)
+                    )["ppg"].to_list()
+                    vacated = sum(dep_ppg)
+
+                # Sum prior-season PPG of arriving players (from wherever they were)
+                added = 0.0
+                if arrived:
+                    arr_ppg = prev.filter(
+                        pl.col("player_id").is_in(list(arrived))
+                    )["ppg"].to_list()
+                    added = sum(arr_ppg)
+
+                pos_opp_rows.append({
+                    "team": team,
+                    "season": season,
+                    "position_group": pos,
+                    "pos_vacated_pts": round(vacated, 2),
+                    "pos_added_pts": round(added, 2),
+                })
+
+    if pos_opp_rows:
+        pos_opp_df = pl.DataFrame(pos_opp_rows)
+        pos_opp_df = pos_opp_df.with_columns(
+            (pl.col("pos_vacated_pts") - pl.col("pos_added_pts")).alias("pos_net_opportunity")
+        )
+        df = df.join(pos_opp_df, on=["team", "season", "position_group"], how="left")
+        print("  Added positional competition features")
+    else:
+        for col in ["pos_vacated_pts", "pos_added_pts", "pos_net_opportunity"]:
+            df = df.with_columns(pl.lit(None).cast(pl.Float64).alias(col))
+
+    # --- 5d: QB change features (for WR/TE) ---
+    # Identify each team's primary QB per season (most games)
+    qb_data = (
+        roster_by_team.filter(pl.col("position_group") == "QB")
+        .group_by(["team", "season"])
+        .agg([
+            pl.col("player_id").first().alias("primary_qb"),  # first after sort = most games (from agg)
+            pl.col("ppg").first().alias("primary_qb_ppg"),
+        ])
+    )
+
+    # Build QB change detection: compare primary QB between consecutive seasons
+    qb_change_rows = []
+    for team in qb_data["team"].unique().to_list():
+        if team is None:
+            continue
+        team_qbs = qb_data.filter(pl.col("team") == team).sort("season")
+        seasons_list = team_qbs["season"].to_list()
+        qb_ids = team_qbs["primary_qb"].to_list()
+
+        for i in range(1, len(seasons_list)):
+            changed = 1.0 if qb_ids[i] != qb_ids[i - 1] else 0.0
+            # Get the new QB's prior-season passing ypg
+            new_qb_id = qb_ids[i]
+            new_qb_prior = roster_by_team.filter(
+                (pl.col("player_id") == new_qb_id)
+                & (pl.col("season") == seasons_list[i] - 1)
+            )
+            new_qb_pass_ypg = 0.0
+            if new_qb_prior.height > 0:
+                # Use pass_ypg from the season-level data if available
+                # Fall back to ppg as a proxy
+                new_qb_pass_ypg = new_qb_prior["ppg"].to_list()[0] or 0.0
+
+            qb_change_rows.append({
+                "team": team,
+                "season": seasons_list[i],
+                "qb_changed": changed,
+                "new_qb_prior_ppg": round(new_qb_pass_ypg, 2),
+            })
+
+    if qb_change_rows:
+        qb_change_df = pl.DataFrame(qb_change_rows)
+        df = df.join(qb_change_df, on=["team", "season"], how="left")
+        # Only apply QB features to WR/TE; zero out for QB/RB
+        df = df.with_columns([
+            pl.when(pl.col("position_group").is_in(["WR", "TE"]))
+            .then(pl.col("qb_changed"))
+            .otherwise(0.0)
+            .alias("qb_changed"),
+            pl.when(pl.col("position_group").is_in(["WR", "TE"]))
+            .then(pl.col("new_qb_prior_ppg"))
+            .otherwise(0.0)
+            .alias("new_qb_prior_ppg"),
+        ])
+        print("  Added QB change features")
+    else:
+        df = df.with_columns([
+            pl.lit(0.0).alias("qb_changed"),
+            pl.lit(0.0).alias("new_qb_prior_ppg"),
+        ])
+
+    # Clean up temp columns
+    df = df.drop([c for c in df.columns if c.startswith("_")])
+
+    # Fill nulls in roster context features
+    roster_feat_cols = [
+        "changed_team", "new_team_pass_ypg", "new_team_rush_ypg",
+        "new_team_rec_pg", "new_team_td_pg", "pos_vacated_pts",
+        "pos_added_pts", "pos_net_opportunity", "qb_changed",
+        "new_qb_prior_ppg",
+    ]
+    for col in roster_feat_cols:
+        if col in df.columns:
+            df = df.with_columns(pl.col(col).fill_null(0.0))
 
     return df
 
@@ -593,7 +815,10 @@ def build_season_features(seasons):
     # Step 4: Add player metadata
     df = _add_player_metadata(df, seasons)
 
-    # Step 5: Define targets
+    # Step 5: Add roster context features
+    df = _add_roster_context_features(df, seasons)
+
+    # Step 6: Define targets
     df = df.with_columns([
         pl.col("ppg").alias("target_ppg"),
         pl.col("games_played").alias("target_games"),
@@ -603,8 +828,8 @@ def build_season_features(seasons):
     # Drop rows without prior-season data (first appearance for each player)
     df = df.filter(pl.col("prior1_ppg").is_not_null())
 
-    # Drop seasons before 2020 as targets (need 2018-2019 as history)
-    df = df.filter(pl.col("season") >= 2020)
+    # Drop seasons before 2017 as targets (need 2 prior seasons for lookback)
+    df = df.filter(pl.col("season") >= 2017)
 
     # Define feature columns (everything that's not an ID, target, or raw current-season stat)
     print(f"  Final dataset: {df.shape[0]} rows, {df.shape[1]} cols")
@@ -616,8 +841,9 @@ def build_season_features(seasons):
 def get_season_feature_columns(df):
     """Return the list of feature column names for the season model."""
     drop_cols = {
-        # IDs
-        "player_id", "player_display_name", "position_group", "season",
+        # IDs and non-features
+        "player_id", "player_display_name", "position_group", "season", "team",
+        "adjustment_ppg",
         # Current-season raw stats (these are targets or leakage)
         "ppg", "pass_ypg", "rush_ypg", "rec_ypg", "tgt_pg", "carries_pg",
         "rec_pg", "pass_td_pg", "rush_td_pg", "rec_td_pg",
@@ -625,5 +851,27 @@ def get_season_feature_columns(df):
         "target_share_avg", "wopr_avg", "ppg_std", "games_played",
         # Targets
         "target_ppg", "target_games", "target_total",
+        # --- Pruned features (correlation analysis, 2025-03) ---
+        # Near-perfect redundancy (r > 0.95 with a retained feature)
+        "prior_games_missed",       # complement of prior_games_played (r=-0.992)
+        "prior1_pass_ypg",          # redundant with pass_ypg_2yr (r=0.989)
+        "prior1_tgt_pg",            # redundant with prior1_target_share_avg (r=0.983)
+        "prior1_carries_pg",        # redundant with rush_ypg_2yr (r=0.979)
+        "prior1_rec_pg",            # redundant with prior1_target_share_avg (r=0.960)
+        "prior1_wopr_avg",          # redundant with prior1_target_share_avg (r=0.976)
+        "prior1_rec_ypg",           # redundant with rec_ypg_2yr (r=0.959)
+        "prior1_rush_ypg",          # redundant with rush_ypg_2yr (r=0.969)
+        "age",                      # redundant with years_exp (r=0.960)
+        # Injury cluster redundancy
+        "inj_weighted_severity",    # redundant with inj_max_severity (r=0.895)
+        "inj_perf_risk",            # redundant with inj_max_severity (r=0.870)
+        # Near-zero target signal
+        "pos_net_opportunity",      # target r=0.002; linear combo of kept features
+        "inj_has_moderate",         # target r=-0.005
+        "inj_times_out",            # target r=0.008
+        "inj_reinjury_risk",        # target r=0.018
+        "new_team_rush_ypg",        # target r=0.011
+        # Borderline redundancy
+        "best_ppg",                 # redundant with ppg_2yr (r=0.928)
     }
     return [c for c in df.columns if c not in drop_cols]

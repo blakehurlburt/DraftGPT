@@ -18,8 +18,9 @@ import nflreadpy as nfl
 ROSTER_PATH = Path(__file__).parent.parent / "data" / "rosters.csv"
 HEADER_COMMENT = """# Roster overrides for 2026 projections (auto-generated + manual edits)
 # Edit this file to reflect trades, cuts, signings, and retirements.
-# Columns: player_name, team, position, status
+# Columns: player_name, team, position, status, adjustment_ppg
 #   status: ACT = active, TRADE = moved teams, CUT = released, RET = retired
+#   adjustment_ppg: manual PPG adjustment (e.g. +2.0 for scheme upgrade, -1.5 for coaching downgrade)
 # Lines starting with # are ignored. Re-run update_rosters.py to refresh.
 """
 
@@ -59,7 +60,10 @@ def load_existing_overrides():
 
 def write_rosters(df):
     """Write roster dataframe to CSV with header comments."""
-    csv_body = df.select(["player_name", "team", "position", "status"]).write_csv()
+    # Ensure adjustment_ppg column exists
+    if "adjustment_ppg" not in df.columns:
+        df = df.with_columns(pl.lit(0.0).alias("adjustment_ppg"))
+    csv_body = df.select(["player_name", "team", "position", "status", "adjustment_ppg"]).write_csv()
     with open(ROSTER_PATH, "w") as f:
         f.write(HEADER_COMMENT)
         f.write(csv_body)
@@ -127,8 +131,18 @@ def main():
             # Remove these players from nflverse data, keep manual version
             manual_names = manual_rows["player_name"].to_list()
             new_rosters = new_rosters.filter(~pl.col("player_name").is_in(manual_names))
-            new_rosters = pl.concat([new_rosters, manual_rows.select(new_rosters.columns)])
+            new_rosters = pl.concat([new_rosters, manual_rows.select(new_rosters.columns)], how="diagonal")
             print(f"  Preserved {manual_rows.shape[0]} manual override(s)")
+
+        # Preserve any non-zero adjustment_ppg values from the old file
+        if "adjustment_ppg" in old.columns:
+            adj = old.filter(pl.col("adjustment_ppg") != 0.0).select(["player_name", "adjustment_ppg"])
+            if adj.shape[0] > 0:
+                # Drop the default adjustment column and merge old adjustments
+                if "adjustment_ppg" in new_rosters.columns:
+                    new_rosters = new_rosters.drop("adjustment_ppg")
+                new_rosters = new_rosters.join(adj, on="player_name", how="left")
+                print(f"  Preserved {adj.shape[0]} manual adjustment(s)")
 
     write_rosters(new_rosters)
     print("Done. Review the file and make manual edits as needed.")

@@ -88,14 +88,30 @@ def main():
     # The "2025 target rows" in df already have prior1_* features from 2024.
     # We need features where 2025 IS the prior season.
 
-    # Rebuild with 2025 as the most recent season to project from
-    print("\nBuilding projection features...")
-    # Get the 2025 season-level stats (these become "prior" for 2026 projection)
-    proj_df = _build_projection_features(range(2018, 2026))
-
-    # Step 5: Get current rosters
+    # Step 5: Get current rosters (needed before projection features for team override)
     print("\nLoading current rosters...")
     rosters = get_current_rosters()
+
+    # Load adjustment_ppg from rosters.csv if available
+    if ROSTER_PATH.exists():
+        roster_raw = pl.read_csv(ROSTER_PATH, comment_prefix="#")
+        if "adjustment_ppg" in roster_raw.columns:
+            import nflreadpy as _nfl
+            name_map = (
+                _nfl.load_players()
+                .select(["gsis_id", "display_name"])
+                .drop_nulls()
+                .unique(subset=["display_name"])
+                .rename({"gsis_id": "player_id", "display_name": "player_name"})
+            )
+            adj_df = roster_raw.select(["player_name", "adjustment_ppg"]).join(
+                name_map, on="player_name", how="left"
+            ).filter(pl.col("player_id").is_not_null()).select(["player_id", "adjustment_ppg"])
+            rosters = rosters.join(adj_df, on="player_id", how="left")
+
+    # Rebuild with 2025 as the most recent season to project from
+    print("\nBuilding projection features...")
+    proj_df = _build_projection_features(range(2018, 2026), rosters=rosters)
 
     # Step 6: Project
     results = project_season(ppg_model, games_model, proj_df)
@@ -177,47 +193,68 @@ def _write_projection_csvs(results):
     print(f"  Wrote {all_df.shape[0]} total players to {path}")
 
 
-def _build_projection_features(seasons):
+def _build_projection_features(seasons, rosters=None):
     """Build feature rows for next-season projection.
 
     Creates one row per player using their most recent season as
     the "prior" season. These rows have prior-season features filled
     but no targets (since the season hasn't happened yet).
+
+    Args:
+        seasons: Iterable of season years for historical data.
+        rosters: Optional roster DataFrame with player_id, current_team,
+                 and adjustment_ppg columns. Used to set the projection
+                 year's team assignment so changed_team is detected correctly.
     """
     import nflreadpy as nfl
-    from nfldata.season_features import _aggregate_to_season, _add_injury_features, _add_player_metadata
+    from nfldata.season_features import (
+        _aggregate_to_season, _add_injury_features, _add_player_metadata,
+        _add_roster_context_features, _build_prior_features,
+    )
 
     # Get season-level aggregates
     season_df = _aggregate_to_season(seasons)
 
     # For projection, we want each player's LAST season to become their prior features
-    # Get players who played in the most recent season
     max_season = season_df["season"].max()
     print(f"  Projecting from {max_season} season data")
 
-    # Build prior features the same way, then filter to the synthetic "next year" row
-    # We'll add a dummy next-season row for each player who played in max_season
-    players_latest = season_df.filter(pl.col("season") == max_season)
-
     # Create dummy rows for max_season + 1
+    players_latest = season_df.filter(pl.col("season") == max_season)
     dummy = players_latest.with_columns(pl.lit(max_season + 1).alias("season"))
+
     # Set current-season stats to null (they're targets we don't have)
-    # Preserve each column's original dtype to avoid schema conflicts on concat
-    id_cols = {"player_id", "season", "player_display_name", "position_group"}
+    # Keep id cols and team (team will be overridden from rosters if available)
+    id_cols = {"player_id", "season", "player_display_name", "position_group", "team"}
     stat_cols = [c for c in dummy.columns if c not in id_cols]
     dummy = dummy.with_columns([pl.lit(None).cast(dummy[c].dtype).alias(c) for c in stat_cols])
+
+    # Override team from current rosters for the projection year
+    # This ensures changed_team is correctly detected for players who moved
+    if rosters is not None and "current_team" in rosters.columns:
+        dummy = dummy.drop("team").join(
+            rosters.select(["player_id", pl.col("current_team").alias("team")]),
+            on="player_id",
+            how="left",
+        )
+        # Fall back to last season's team if roster doesn't have this player
+        fallback = players_latest.select(["player_id", pl.col("team").alias("_fallback_team")])
+        dummy = dummy.join(fallback, on="player_id", how="left")
+        dummy = dummy.with_columns(
+            pl.col("team").fill_null(pl.col("_fallback_team"))
+        ).drop("_fallback_team")
 
     # Append dummy rows and rebuild prior features
     extended = pl.concat([season_df, dummy], how="diagonal")
     extended = extended.sort(["player_id", "season"])
 
     # Rebuild prior-season features
-    from nfldata.season_features import _build_prior_features
     extended = _build_prior_features(extended)
 
-    # Add injury and metadata features
+    # Add injury, metadata, and roster context features
     extended = _add_injury_features(extended, seasons)
     extended = _add_player_metadata(extended, seasons)
+    extended = _add_roster_context_features(extended, seasons)
 
     # Filter to the projection rows only
     proj = extended.filter(pl.col("season") == max_season + 1)
@@ -245,6 +282,13 @@ def _build_projection_features(seasons):
         )
     # Overwrite the null metadata columns
     proj = proj.drop(available_meta).join(missing_meta, on="player_id", how="left")
+
+    # Add manual adjustments from rosters if available
+    if rosters is not None and "adjustment_ppg" in rosters.columns:
+        adj = rosters.select(["player_id", "adjustment_ppg"])
+        proj = proj.join(adj, on="player_id", how="left")
+    if "adjustment_ppg" not in proj.columns:
+        proj = proj.with_columns(pl.lit(0.0).alias("adjustment_ppg"))
 
     # Add dummy targets (won't be used, but needed for column compatibility)
     proj = proj.with_columns([
