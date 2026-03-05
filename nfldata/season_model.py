@@ -14,9 +14,14 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from .season_features import get_season_feature_columns
 
 
-def _train_xgb(X_train, y_train, X_val, y_val, label=""):
-    """Train a single XGBRegressor with early stopping."""
-    model = XGBRegressor(
+def _train_xgb(X_train, y_train, X_val, y_val, label="", quantile=None):
+    """Train a single XGBRegressor with early stopping.
+
+    Args:
+        quantile: If set (0-1), trains a quantile regression model instead
+                  of mean regression. E.g., 0.1 for floor, 0.9 for ceiling.
+    """
+    kwargs = dict(
         n_estimators=500,
         max_depth=5,
         learning_rate=0.05,
@@ -29,6 +34,10 @@ def _train_xgb(X_train, y_train, X_val, y_val, label=""):
         early_stopping_rounds=50,
         verbosity=0,
     )
+    if quantile is not None:
+        kwargs["objective"] = "reg:quantileerror"
+        kwargs["quantile_alpha"] = quantile
+    model = XGBRegressor(**kwargs)
     model.fit(
         X_train, y_train,
         eval_set=[(X_val, y_val)],
@@ -305,14 +314,19 @@ def walk_forward_with_residuals(df, min_train_seasons=2):
     return results_df, residual_map
 
 
-def train_final_model(df):
+def train_final_model(df, quantiles=(0.1, 0.5, 0.9)):
     """Train on ALL available data for production predictions.
+
+    Trains mean regression models for PPG and games, plus quantile
+    regression models for floor/ceiling PPG estimates.
 
     Args:
         df: Polars DataFrame from build_season_features().
+        quantiles: Tuple of (floor_quantile, ceiling_quantile).
 
     Returns:
-        Tuple of (ppg_model, games_model, feature_importance_df).
+        Tuple of (ppg_model, games_model, feature_importance_df, quantile_models)
+        where quantile_models is a dict like {0.1: ppg_floor_model, 0.9: ppg_ceil_model}.
     """
     feature_cols = get_season_feature_columns(df)
     print(f"\nTraining final models on {df.shape[0]} rows, {len(feature_cols)} features...")
@@ -322,7 +336,7 @@ def train_final_model(df):
     y_games = df["target_games"].to_pandas()
 
     # Train with no early stopping (use all data)
-    ppg_model = XGBRegressor(
+    _final_params = dict(
         n_estimators=300,
         max_depth=5,
         learning_rate=0.05,
@@ -334,21 +348,27 @@ def train_final_model(df):
         random_state=42,
         verbosity=0,
     )
+
+    ppg_model = XGBRegressor(**_final_params)
     ppg_model.fit(X, y_ppg)
 
-    games_model = XGBRegressor(
-        n_estimators=300,
-        max_depth=5,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        min_child_weight=5,
-        reg_alpha=0.1,
-        reg_lambda=1.0,
-        random_state=42,
-        verbosity=0,
-    )
+    games_model = XGBRegressor(**_final_params)
     games_model.fit(X, y_games)
+
+    # Train quantile models for PPG floor/ceiling
+    quantile_models = {}
+    for q in quantiles:
+        if q < 0.5:
+            label = "floor"
+        elif q == 0.5:
+            label = "median"
+        else:
+            label = "ceiling"
+        print(f"  Training PPG {label} model (q={q})...")
+        q_params = {**_final_params, "objective": "reg:quantileerror", "quantile_alpha": q}
+        q_model = XGBRegressor(**q_params)
+        q_model.fit(X, y_ppg)
+        quantile_models[q] = q_model
 
     # Feature importance (from PPG model, which is the primary one)
     importance = pd.DataFrame({
@@ -361,19 +381,21 @@ def train_final_model(df):
     for _, row in importance.head(10).iterrows():
         print(f"    {row['feature']:<30} {row['ppg_importance']:.4f}")
 
-    return ppg_model, games_model, pl.from_pandas(importance)
+    return ppg_model, games_model, pl.from_pandas(importance), quantile_models
 
 
-def project_season(ppg_model, games_model, features_df):
+def project_season(ppg_model, games_model, features_df, quantile_models=None):
     """Project next season's PPG, games, and total for each player.
 
     Args:
-        ppg_model: Fitted XGBRegressor for PPG.
+        ppg_model: Fitted XGBRegressor for PPG (mean).
         games_model: Fitted XGBRegressor for games played.
         features_df: Polars DataFrame with feature columns for the projection season.
+        quantile_models: Optional dict of {quantile: model} for floor/median/ceiling.
 
     Returns:
         Polars DataFrame with player info and projections, ranked by position.
+        Includes ppg_floor, ppg_median, ppg_ceiling if quantile_models provided.
     """
     from .season_features import get_season_feature_columns
     feature_cols = get_season_feature_columns(features_df)
@@ -384,6 +406,7 @@ def project_season(ppg_model, games_model, features_df):
     pred_games = np.clip(games_model.predict(X), 0, 17)
 
     # Apply manual PPG adjustments if present
+    adj = np.zeros(len(pred_ppg))
     if "adjustment_ppg" in features_df.columns:
         adj = features_df["adjustment_ppg"].fill_null(0.0).to_numpy()
         nonzero = np.count_nonzero(adj)
@@ -401,6 +424,24 @@ def project_season(ppg_model, games_model, features_df):
         pl.Series("projected_games", np.round(pred_games, 1)),
         pl.Series("projected_total", np.round(pred_total, 0).astype(int)),
     ])
+
+    # Add quantile projections (floor/median/ceiling)
+    if quantile_models:
+        for q, q_model in sorted(quantile_models.items()):
+            q_pred = q_model.predict(X) + adj
+            q_total = q_pred * pred_games
+            if q == 0.1:
+                label = "floor"
+            elif q == 0.5:
+                label = "median"
+            elif q == 0.9:
+                label = "ceiling"
+            else:
+                label = f"q{int(q*100)}"
+            results = results.with_columns([
+                pl.Series(f"ppg_{label}", np.round(q_pred, 1)),
+                pl.Series(f"total_{label}", np.round(q_total, 0).astype(int)),
+            ])
 
     # Rank within position
     results = results.sort("projected_total", descending=True)

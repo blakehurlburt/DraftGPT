@@ -77,7 +77,7 @@ def main():
 
     # Step 3: Train final model on all available data
     print("\n--- Training Final Model ---")
-    ppg_model, games_model, importance = train_final_model(df)
+    ppg_model, games_model, importance, quantile_models = train_final_model(df)
 
     # Step 4: Build projection features for 2026
     # Players who played in 2025 will have prior-season features.
@@ -113,8 +113,8 @@ def main():
     print("\nBuilding projection features...")
     proj_df = _build_projection_features(range(2018, 2026), rosters=rosters)
 
-    # Step 6: Project
-    results = project_season(ppg_model, games_model, proj_df)
+    # Step 6: Project (with floor/median/ceiling)
+    results = project_season(ppg_model, games_model, proj_df, quantile_models=quantile_models)
 
     # Join with rosters
     results = results.join(rosters, on="player_id", how="left")
@@ -129,6 +129,8 @@ def main():
     # Step 7: Write CSVs and print rankings
     _write_projection_csvs(results)
 
+    has_quantiles = "ppg_floor" in results.columns
+
     for pos in ["QB", "RB", "WR", "TE"]:
         n = 40 if pos in ("RB", "WR") else 20
         pos_df = (
@@ -136,34 +138,54 @@ def main():
             .sort("projected_total", descending=True)
             .head(n)
         )
-        print(f"\n{'='*72}")
+        print(f"\n{'='*95}")
         print(f"  {pos} RANKINGS — 2026 Season-Level Projections (PPR)")
-        print(f"{'='*72}")
-        print(f"{'Rank':<6}{'Player':<28}{'Team':<6}{'PPG':>7}{'Games':>7}{'Total':>7}")
-        print(f"{'-'*6}{'-'*28}{'-'*6}{'-'*7}{'-'*7}{'-'*7}")
+        print(f"{'='*95}")
+        if has_quantiles:
+            print(f"{'Rank':<6}{'Player':<26}{'Team':<6}{'PPG':>7}{'Median':>7}{'Floor':>7}{'Ceil':>7}{'Games':>7}{'Total':>7}")
+            print(f"{'-'*6}{'-'*26}{'-'*6}{'-'*7}{'-'*7}{'-'*7}{'-'*7}{'-'*7}{'-'*7}")
+        else:
+            print(f"{'Rank':<6}{'Player':<26}{'Team':<6}{'PPG':>7}{'Games':>7}{'Total':>7}")
+            print(f"{'-'*6}{'-'*26}{'-'*6}{'-'*7}{'-'*7}{'-'*7}")
         for i, row in enumerate(pos_df.iter_rows(named=True), 1):
-            name = (row.get("player_display_name") or "???")[:26]
+            name = (row.get("player_display_name") or "???")[:24]
             team = (row.get("current_team") or "???")[:5]
             ppg = row["projected_ppg"]
             games = row["projected_games"]
             total = row["projected_total"]
-            print(f"{i:<6}{name:<28}{team:<6}{ppg:>7.1f}{games:>7.1f}{total:>7}")
+            if has_quantiles:
+                floor = row.get("ppg_floor", 0)
+                median = row.get("ppg_median", 0)
+                ceil = row.get("ppg_ceiling", 0)
+                print(f"{i:<6}{name:<26}{team:<6}{ppg:>7.1f}{median:>7.1f}{floor:>7.1f}{ceil:>7.1f}{games:>7.1f}{total:>7}")
+            else:
+                print(f"{i:<6}{name:<26}{team:<6}{ppg:>7.1f}{games:>7.1f}{total:>7}")
 
     # Overall draft board
     overall = results.sort("projected_total", descending=True).head(60)
-    print(f"\n{'='*78}")
+    print(f"\n{'='*100}")
     print(f"  OVERALL DRAFT BOARD — Top 60 (PPR, Season-Level Model)")
-    print(f"{'='*78}")
-    print(f"{'#':<5}{'Pos':<7}{'Player':<28}{'Team':<6}{'PPG':>7}{'Games':>7}{'Total':>7}")
-    print(f"{'-'*5}{'-'*7}{'-'*28}{'-'*6}{'-'*7}{'-'*7}{'-'*7}")
+    print(f"{'='*100}")
+    if has_quantiles:
+        print(f"{'#':<5}{'Pos':<7}{'Player':<26}{'Team':<6}{'PPG':>7}{'Median':>7}{'Floor':>7}{'Ceil':>7}{'Games':>7}{'Total':>7}")
+        print(f"{'-'*5}{'-'*7}{'-'*26}{'-'*6}{'-'*7}{'-'*7}{'-'*7}{'-'*7}{'-'*7}{'-'*7}")
+    else:
+        print(f"{'#':<5}{'Pos':<7}{'Player':<26}{'Team':<6}{'PPG':>7}{'Games':>7}{'Total':>7}")
+        print(f"{'-'*5}{'-'*7}{'-'*26}{'-'*6}{'-'*7}{'-'*7}{'-'*7}")
     for i, row in enumerate(overall.iter_rows(named=True), 1):
-        name = (row.get("player_display_name") or "???")[:26]
+        name = (row.get("player_display_name") or "???")[:24]
         team = (row.get("current_team") or "???")[:5]
         pos = row.get("rank_label", "?")
         ppg = row["projected_ppg"]
         games = row["projected_games"]
         total = row["projected_total"]
-        print(f"{i:<5}{pos:<7}{name:<28}{team:<6}{ppg:>7.1f}{games:>7.1f}{total:>7}")
+        if has_quantiles:
+            floor = row.get("ppg_floor", 0)
+            median = row.get("ppg_median", 0)
+            ceil = row.get("ppg_ceiling", 0)
+            print(f"{i:<5}{pos:<7}{name:<26}{team:<6}{ppg:>7.1f}{median:>7.1f}{floor:>7.1f}{ceil:>7.1f}{games:>7.1f}{total:>7}")
+        else:
+            print(f"{i:<5}{pos:<7}{name:<26}{team:<6}{ppg:>7.1f}{games:>7.1f}{total:>7}")
 
 
 def _write_projection_csvs(results):
@@ -172,7 +194,9 @@ def _write_projection_csvs(results):
 
     # Columns for the CSV output
     csv_cols = ["player_display_name", "position_group", "current_team",
-                "projected_ppg", "projected_games", "projected_total", "pos_rank"]
+                "projected_ppg", "ppg_median", "ppg_floor", "ppg_ceiling",
+                "projected_games", "projected_total", "total_floor", "total_ceiling",
+                "pos_rank"]
     available = [c for c in csv_cols if c in results.columns]
 
     # Per-position files
