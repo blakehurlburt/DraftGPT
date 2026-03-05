@@ -471,6 +471,22 @@ def _add_injury_features(df, seasons):
 
     df = df.join(inj_agg, on=["player_id", "season"], how="left")
 
+    # Fill severity nulls for players who were on the injury report but had
+    # no "real" injuries (only illness/rest/personal). These players have
+    # inj_weeks_on_report populated but severity features null.
+    severity_cols = [
+        "inj_max_severity", "inj_has_major", "inj_has_moderate",
+        "inj_has_minor",
+    ]
+    for col in severity_cols:
+        if col in df.columns:
+            df = df.with_columns(
+                pl.when(pl.col("inj_weeks_on_report").is_not_null() & pl.col(col).is_null())
+                .then(0.0)
+                .otherwise(pl.col(col))
+                .alias(col)
+            )
+
     return df
 
 
@@ -637,6 +653,11 @@ def _add_roster_context_features(df, seasons):
 
     if pos_opp_rows:
         pos_opp_df = pl.DataFrame(pos_opp_rows)
+        # Clamp to 0 — vacated/added points can't be negative
+        pos_opp_df = pos_opp_df.with_columns([
+            pl.col("pos_vacated_pts").clip(lower_bound=0.0),
+            pl.col("pos_added_pts").clip(lower_bound=0.0),
+        ])
         pos_opp_df = pos_opp_df.with_columns(
             (pl.col("pos_vacated_pts") - pl.col("pos_added_pts")).alias("pos_net_opportunity")
         )
@@ -873,5 +894,7 @@ def get_season_feature_columns(df):
         "new_team_rush_ypg",        # target r=0.011
         # Borderline redundancy
         "best_ppg",                 # redundant with ppg_2yr (r=0.928)
+        # Data quality
+        "inj_has_major",            # only 16 positives out of 2928 rows
     }
     return [c for c in df.columns if c not in drop_cols]
