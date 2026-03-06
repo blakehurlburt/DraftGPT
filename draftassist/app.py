@@ -128,27 +128,30 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
         adp_rank = {name: i + 1 for i, name in enumerate(adp_order)}
 
     # Recommendations (only when it's user's turn and not skipped)
+    # Pre-compute for all 3 risk profiles so frontend can toggle client-side
     recs = {}
     if is_my_turn and not skip_recommendations:
-        all_recs = get_all_recommendations(
-            state, user_slot, players, adp_order, n=30, risk_profile=risk_profile,
-        )
-        for strat_name, rec_list in all_recs.items():
-            recs[strat_name] = [
-                {
-                    "rank": r.rank,
-                    "name": r.player.name,
-                    "position": r.player.position,
-                    "team": r.player.team,
-                    "projected_total": round(r.player.projected_total, 1),
-                    "total_floor": round(r.player.total_floor, 1),
-                    "total_ceiling": round(r.player.total_ceiling, 1),
-                    "vbd": round(r.vbd_value, 1),
-                    "strategy_score": round(r.strategy_score, 1),
-                    "adp": adp_rank.get(r.player.name, 999),
-                }
-                for r in rec_list
-            ]
+        for rp in ("safe", "balanced", "aggressive"):
+            all_recs = get_all_recommendations(
+                state, user_slot, players, adp_order, n=30, risk_profile=rp,
+            )
+            recs[rp] = {}
+            for strat_name, rec_list in all_recs.items():
+                recs[rp][strat_name] = [
+                    {
+                        "rank": r.rank,
+                        "name": r.player.name,
+                        "position": r.player.position,
+                        "team": r.player.team,
+                        "projected_total": round(r.player.projected_total, 1),
+                        "total_floor": round(r.player.total_floor, 1),
+                        "total_ceiling": round(r.player.total_ceiling, 1),
+                        "vbd": round(r.vbd_value, 1),
+                        "strategy_score": round(r.strategy_score, 1),
+                        "adp": adp_rank.get(r.player.name, 999),
+                    }
+                    for r in rec_list
+                ]
 
     # All picks sorted by pick number
     all_picks_list = []
@@ -455,32 +458,33 @@ async def get_more_recommendations(
         return JSONResponse({"recommendations": {}})
 
     total = offset + n
-    all_recs = get_all_recommendations(
-        state, slot, sess.players, sess.adp_order, n=total,
-        risk_profile=sess.risk_profile,
-    )
 
     # Build ADP rank lookup
     adp_rank = {name: i + 1 for i, name in enumerate(sess.adp_order)} if sess.adp_order else {}
 
     recs = {}
-    for strat_name, rec_list in all_recs.items():
-        # Only return recs beyond the offset
-        recs[strat_name] = [
-            {
-                "rank": r.rank,
-                "name": r.player.name,
-                "position": r.player.position,
-                "team": r.player.team,
-                "projected_total": round(r.player.projected_total, 1),
-                "total_floor": round(r.player.total_floor, 1),
-                "total_ceiling": round(r.player.total_ceiling, 1),
-                "vbd": round(r.vbd_value, 1),
-                "strategy_score": round(r.strategy_score, 1),
-                "adp": adp_rank.get(r.player.name, 999),
-            }
-            for r in rec_list[offset:]
-        ]
+    for rp in ("safe", "balanced", "aggressive"):
+        all_recs = get_all_recommendations(
+            state, slot, sess.players, sess.adp_order, n=total,
+            risk_profile=rp,
+        )
+        recs[rp] = {}
+        for strat_name, rec_list in all_recs.items():
+            recs[rp][strat_name] = [
+                {
+                    "rank": r.rank,
+                    "name": r.player.name,
+                    "position": r.player.position,
+                    "team": r.player.team,
+                    "projected_total": round(r.player.projected_total, 1),
+                    "total_floor": round(r.player.total_floor, 1),
+                    "total_ceiling": round(r.player.total_ceiling, 1),
+                    "vbd": round(r.vbd_value, 1),
+                    "strategy_score": round(r.strategy_score, 1),
+                    "adp": adp_rank.get(r.player.name, 999),
+                }
+                for r in rec_list[offset:]
+            ]
 
     return JSONResponse({"recommendations": recs})
 

@@ -307,16 +307,6 @@ section h2 {
     border-color: #4fc3f7;
 }
 
-.risk-tab[data-risk="safe"].active {
-    color: #66bb6a;
-    border-color: #66bb6a;
-}
-
-.risk-tab[data-risk="aggressive"].active {
-    color: #ff7043;
-    border-color: #ff7043;
-}
-
 /* Floor/ceiling range columns */
 td.range-floor {
     color: #66bb6a;

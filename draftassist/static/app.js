@@ -136,25 +136,13 @@
         });
     });
 
-    // Risk profile tabs
+    // Risk profile tabs — client-side toggle (all risk levels pre-computed)
     $$(".risk-tab").forEach((tab) => {
-        tab.addEventListener("click", async () => {
+        tab.addEventListener("click", () => {
             $$(".risk-tab").forEach((t) => t.classList.remove("active"));
             tab.classList.add("active");
             currentRisk = tab.dataset.risk;
-
-            try {
-                await fetch(
-                    apiUrl("/api/risk", { profile: currentRisk }),
-                    { method: "POST" }
-                );
-                const stateResp = await fetch(apiUrl("/api/state"));
-                const state = await stateResp.json();
-                resetExtraRecs();
-                updateUI(state);
-            } catch (err) {
-                console.error("Risk profile switch failed:", err);
-            }
+            if (currentState) renderRecommendations(currentState);
         });
     });
 
@@ -216,11 +204,9 @@
 
         // Need more data from backend
         if (prefetchedRecs && Object.keys(prefetchedRecs).length) {
-            for (const [strat, recs] of Object.entries(prefetchedRecs)) {
-                if (!extraRecs[strat]) extraRecs[strat] = [];
-                extraRecs[strat].push(...recs);
-            }
-            totalLoaded += Object.values(prefetchedRecs)[0]?.length || 0;
+            _mergeNestedRecs(prefetchedRecs, extraRecs);
+            const anyRisk = Object.values(prefetchedRecs)[0] || {};
+            totalLoaded += Object.values(anyRisk)[0]?.length || 0;
             prefetchedRecs = {};
             renderRecommendations(currentState);
             prefetchMore();
@@ -234,10 +220,7 @@
             const resp = await fetch(apiUrl("/api/more", { offset: totalLoaded, n: displayCount }));
             const data = await resp.json();
             const moreRecs = data.recommendations || {};
-            for (const [strat, recs] of Object.entries(moreRecs)) {
-                if (!extraRecs[strat]) extraRecs[strat] = [];
-                extraRecs[strat].push(...recs);
-            }
+            _mergeNestedRecs(moreRecs, extraRecs);
             totalLoaded += displayCount;
             renderRecommendations(currentState);
             prefetchMore();
@@ -262,9 +245,22 @@
     }
 
     function getAllRecsForStrategy(strategy) {
-        const base = (currentState?.recommendations || {})[strategy] || [];
-        const extra = extraRecs[strategy] || [];
+        // recommendations is nested: { risk: { strategy: [...] } }
+        const riskRecs = (currentState?.recommendations || {})[currentRisk] || {};
+        const base = riskRecs[strategy] || [];
+        const extra = (extraRecs[currentRisk] || {})[strategy] || [];
         return [...base, ...extra];
+    }
+
+    function _mergeNestedRecs(source, target) {
+        // Merge { risk: { strategy: [...] } } from source into target
+        for (const [risk, strats] of Object.entries(source)) {
+            if (!target[risk]) target[risk] = {};
+            for (const [strat, recs] of Object.entries(strats)) {
+                if (!target[risk][strat]) target[risk][strat] = [];
+                target[risk][strat].push(...recs);
+            }
+        }
     }
 
     async function prefetchMore() {
@@ -453,10 +449,10 @@
                 <td><span class="pos-badge pos-${r.position}">${r.position}</span></td>
                 <td>${r.team}</td>
                 <td>${r.projected_total}</td>
-                <td class="range-floor">${r.total_floor ?? "—"}</td>
-                <td class="range-ceil">${r.total_ceiling ?? "—"}</td>
-                <td>${r.strategy_score}</td>
-                <td>${r.adp}</td>
+                <td class="range-floor">${r.total_floor || "—"}</td>
+                <td class="range-ceil">${r.total_ceiling || "—"}</td>
+                <td>${r.strategy_score ?? "—"}</td>
+                <td>${r.adp && r.adp < 999 ? r.adp : "—"}</td>
             </tr>`
             )
             .join("");
