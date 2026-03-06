@@ -31,6 +31,7 @@
 
     let currentStrategy = "vbd";
     let currentAdp = "consensus";
+    let currentRisk = "balanced";  // "safe", "balanced", "aggressive"
     let currentSort = "rank";  // "rank" or "adp"
     let posFilters = new Set(["QB", "RB", "WR", "TE"]);
     let currentState = null;
@@ -131,6 +132,28 @@
                 updateUI(state);
             } catch (err) {
                 console.error("ADP switch failed:", err);
+            }
+        });
+    });
+
+    // Risk profile tabs
+    $$(".risk-tab").forEach((tab) => {
+        tab.addEventListener("click", async () => {
+            $$(".risk-tab").forEach((t) => t.classList.remove("active"));
+            tab.classList.add("active");
+            currentRisk = tab.dataset.risk;
+
+            try {
+                await fetch(
+                    apiUrl("/api/risk", { profile: currentRisk }),
+                    { method: "POST" }
+                );
+                const stateResp = await fetch(apiUrl("/api/state"));
+                const state = await stateResp.json();
+                resetExtraRecs();
+                updateUI(state);
+            } catch (err) {
+                console.error("Risk profile switch failed:", err);
             }
         });
     });
@@ -314,28 +337,12 @@
         }
     }
 
-    function saveConnection(draftId, slot) {
-        try {
-            localStorage.setItem("draftassist", JSON.stringify({
-                draft_id: draftId, slot: slot, session_id: sessionId,
-            }));
-        } catch (_) { /* private browsing */ }
-    }
-
-    function loadConnection() {
-        try {
-            const raw = localStorage.getItem("draftassist");
-            return raw ? JSON.parse(raw) : null;
-        } catch (_) { return null; }
-    }
-
     function showConnectedUI(draftId, slot, data) {
         const url = new URL(window.location);
         url.searchParams.set("draft_id", draftId);
         url.searchParams.set("slot", slot);
         url.searchParams.set("session_id", sessionId);
         window.history.replaceState({}, "", url);
-        saveConnection(draftId, slot);
 
         welcomeScreen.classList.add("hidden");
         connectionBar.classList.remove("hidden");
@@ -432,7 +439,7 @@
                 ? (state.is_my_turn ? "No recommendations available" : "Recommendations appear on your turn")
                 : "No players match current filters";
             recBody.innerHTML =
-                '<tr><td colspan="7" class="empty-msg">' + msg + "</td></tr>";
+                '<tr><td colspan="9" class="empty-msg">' + msg + "</td></tr>";
             showMoreBtn.classList.add("hidden");
             return;
         }
@@ -446,6 +453,8 @@
                 <td><span class="pos-badge pos-${r.position}">${r.position}</span></td>
                 <td>${r.team}</td>
                 <td>${r.projected_total}</td>
+                <td class="range-floor">${r.total_floor ?? "—"}</td>
+                <td class="range-ceil">${r.total_ceiling ?? "—"}</td>
                 <td>${r.strategy_score}</td>
                 <td>${r.adp}</td>
             </tr>`
@@ -576,23 +585,12 @@
         }
     }
 
-    // Auto-reconnect: check URL params first, then localStorage
+    // Auto-reconnect: check URL params on page load
     (function autoConnect() {
         const params = new URLSearchParams(window.location.search);
-        let draftId = params.get("draft_id");
-        let slot = params.get("slot");
-        let savedSessionId = params.get("session_id");
-
-        // Fall back to localStorage if URL params are missing
-        if (!draftId || !slot) {
-            const saved = loadConnection();
-            if (saved) {
-                draftId = saved.draft_id;
-                slot = saved.slot;
-                savedSessionId = saved.session_id;
-            }
-        }
-
+        const draftId = params.get("draft_id");
+        const slot = params.get("slot");
+        const savedSessionId = params.get("session_id");
         if (draftId && slot) {
             draftIdInput.value = draftId;
             userSlotInput.value = slot;

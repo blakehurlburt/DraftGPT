@@ -50,6 +50,7 @@ class DraftSession:
     connected: bool = False
     adp_platform: str = "consensus"
     adp_order: list[str] = field(default_factory=list)
+    risk_profile: str = "balanced"  # "safe", "balanced", "aggressive"
     last_activity: float = field(default_factory=time.monotonic)
 
 
@@ -111,7 +112,7 @@ def _compute_adp_order(players: list[Player], platform: str) -> list[str]:
 
 
 def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
-                         skip_recommendations=False):
+                         skip_recommendations=False, risk_profile="balanced"):
     """Build the JSON payload describing current draft state."""
     config = state.config
     is_complete = state.is_complete
@@ -129,7 +130,9 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
     # Recommendations (only when it's user's turn and not skipped)
     recs = {}
     if is_my_turn and not skip_recommendations:
-        all_recs = get_all_recommendations(state, user_slot, players, adp_order, n=30)
+        all_recs = get_all_recommendations(
+            state, user_slot, players, adp_order, n=30, risk_profile=risk_profile,
+        )
         for strat_name, rec_list in all_recs.items():
             recs[strat_name] = [
                 {
@@ -138,6 +141,8 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
                     "position": r.player.position,
                     "team": r.player.team,
                     "projected_total": round(r.player.projected_total, 1),
+                    "total_floor": round(r.player.total_floor, 1),
+                    "total_ceiling": round(r.player.total_ceiling, 1),
                     "vbd": round(r.vbd_value, 1),
                     "strategy_score": round(r.strategy_score, 1),
                     "adp": adp_rank.get(r.player.name, 999),
@@ -211,6 +216,7 @@ def _refresh_state(sess: DraftSession, picks):
     payload = _build_state_payload(
         state, sess.meta, picks,
         sess.user_slot, sess.players, sess.adp_order,
+        risk_profile=sess.risk_profile,
     )
     sess.state_payload = payload
     return payload
@@ -272,6 +278,7 @@ async def _poll_loop(sess: DraftSession):
                     state, sess.meta, picks,
                     sess.user_slot, sess.players, sess.adp_order,
                     skip_recommendations=True,
+                    risk_profile=sess.risk_profile,
                 )
                 sess.state_payload = payload
                 _push_to_subscribers(sess, payload)
@@ -286,6 +293,7 @@ async def _poll_loop(sess: DraftSession):
                     payload = _build_state_payload(
                         state, sess.meta, picks,
                         sess.user_slot, sess.players, sess.adp_order,
+                        risk_profile=sess.risk_profile,
                     )
                     sess.state_payload = payload
                     _push_to_subscribers(sess, payload)
@@ -347,7 +355,8 @@ async def connect_draft(
     sess.last_activity = time.monotonic()
 
     payload = _build_state_payload(
-        state, meta, picks, slot_0, players, sess.adp_order
+        state, meta, picks, slot_0, players, sess.adp_order,
+        risk_profile=sess.risk_profile,
     )
     sess.state_payload = payload
 
@@ -399,6 +408,31 @@ async def set_adp_platform(
     return JSONResponse({"status": "ok", "platform": platform})
 
 
+@app.post("/api/risk")
+async def set_risk_profile(
+    session_id: str = Query(..., description="Session ID"),
+    profile: str = Query("balanced", description="Risk profile: safe, balanced, aggressive"),
+):
+    """Switch the risk/variance profile for recommendations."""
+    sess = _get_session(session_id)
+    if not sess.connected:
+        return JSONResponse({"error": "Not connected to a draft"}, status_code=400)
+
+    valid = {"safe", "balanced", "aggressive"}
+    if profile not in valid:
+        return JSONResponse({"error": f"Invalid profile. Choose from: {valid}"}, status_code=400)
+
+    sess.risk_profile = profile
+
+    # Rebuild current state payload with new risk profile
+    async with httpx.AsyncClient(timeout=10) as client:
+        picks = await fetch_draft_picks(client, sess.draft_id)
+
+    _refresh_state(sess, picks)
+
+    return JSONResponse({"status": "ok", "profile": profile})
+
+
 @app.get("/api/more")
 async def get_more_recommendations(
     session_id: str = Query(..., description="Session ID"),
@@ -422,7 +456,8 @@ async def get_more_recommendations(
 
     total = offset + n
     all_recs = get_all_recommendations(
-        state, slot, sess.players, sess.adp_order, n=total
+        state, slot, sess.players, sess.adp_order, n=total,
+        risk_profile=sess.risk_profile,
     )
 
     # Build ADP rank lookup
@@ -438,6 +473,8 @@ async def get_more_recommendations(
                 "position": r.player.position,
                 "team": r.player.team,
                 "projected_total": round(r.player.projected_total, 1),
+                "total_floor": round(r.player.total_floor, 1),
+                "total_ceiling": round(r.player.total_ceiling, 1),
                 "vbd": round(r.vbd_value, 1),
                 "strategy_score": round(r.strategy_score, 1),
                 "adp": adp_rank.get(r.player.name, 999),

@@ -18,7 +18,14 @@ class Player:
     projected_games: float
     projected_total: float
     pos_rank: int
+    total_floor: float = 0.0   # 10th percentile season total
+    total_ceiling: float = 0.0  # 90th percentile season total
     sleeper_id: str = ""
+
+    @property
+    def upside(self) -> float:
+        """Projection spread: ceiling - floor."""
+        return self.total_ceiling - self.total_floor
 
     def __repr__(self) -> str:
         return f"{self.name} ({self.position}{self.pos_rank}, {self.team}) {self.projected_total:.0f}pts"
@@ -60,6 +67,8 @@ def load_players(
                     projected_games=float(row["projected_games"]),
                     projected_total=total,
                     pos_rank=int(row["pos_rank"]),
+                    total_floor=float(row.get("total_floor", 0)),
+                    total_ceiling=float(row.get("total_ceiling", 0)),
                 )
             )
 

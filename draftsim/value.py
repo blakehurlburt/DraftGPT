@@ -113,6 +113,70 @@ def vona(
     return best_now - best_later
 
 
+# Risk profile names → multiplier on the variance bonus.
+# Positive = prefer ceiling (aggressive), negative = prefer floor (safe).
+RISK_PROFILES = {
+    "safe": -1.0,
+    "balanced": 0.0,
+    "aggressive": 1.0,
+}
+
+
+def variance_bonus(
+    player: Player,
+    roster: list[Player],
+    current_round: int,
+    total_rounds: int,
+    risk_profile: str = "balanced",
+) -> float:
+    """Score modifier based on projection variance and roster context.
+
+    Three factors combine:
+      1. Round-based risk tolerance — early rounds favour floor, late rounds
+         favour ceiling.
+      2. Portfolio diversity — if existing roster players at this position are
+         all safe (narrow spread), nudge toward ceiling picks and vice-versa.
+      3. User risk profile override — shifts the whole curve toward safe or
+         aggressive.
+
+    Returns a bonus (positive or negative) to add to a strategy score.
+    The magnitude is scaled to be meaningful relative to VBD values (~5-15%
+    of a typical top-player VBD).
+    """
+    if player.upside <= 0:
+        return 0.0
+
+    profile_mult = RISK_PROFILES.get(risk_profile, 0.0)
+
+    # --- 1. Round-based risk curve ---
+    # Maps round fraction [0, 1] to a preference in [-1, 1].
+    # Early rounds → negative (prefer floor), late → positive (prefer ceiling).
+    round_frac = (current_round - 1) / max(total_rounds - 1, 1)
+    round_pref = (round_frac - 0.35) * 2  # ~-0.7 early, ~+1.3 late, 0 around round 6
+
+    # --- 2. Portfolio diversity at this position ---
+    pos_roster = [p for p in roster if p.position == player.position]
+    if pos_roster:
+        avg_upside = sum(p.upside for p in pos_roster) / len(pos_roster)
+        player_upside = player.upside
+        # If roster is safe (low avg_upside) → prefer ceiling (positive nudge)
+        # If roster is volatile → prefer floor (negative nudge)
+        if avg_upside > 0:
+            diversity_pref = (player_upside - avg_upside) / avg_upside
+            diversity_pref = max(-1.0, min(1.0, diversity_pref))  # clamp
+        else:
+            diversity_pref = 0.0
+    else:
+        diversity_pref = 0.0
+
+    # --- Combine factors ---
+    # Base weight: fraction of upside to apply (keeps bonus proportional)
+    base = player.upside * 0.10  # 10% of spread as max swing
+
+    combined_pref = round_pref * 0.4 + diversity_pref * 0.3 + profile_mult * 0.3
+    return base * combined_pref
+
+
 def positional_scarcity(
     state: DraftState,
     position: str,

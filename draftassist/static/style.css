@@ -234,6 +234,7 @@ section h2 {
     align-items: center;
     gap: 16px;
     margin-bottom: 12px;
+    flex-wrap: wrap;
 }
 
 /* ADP source tabs */
@@ -269,6 +270,62 @@ section h2 {
     background: #1e2d3d;
     color: #4fc3f7;
     border-color: #4fc3f7;
+}
+
+/* Risk profile tabs */
+#risk-tabs {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.risk-label {
+    font-size: 11px;
+    color: #6b7c8d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 4px;
+    cursor: help;
+}
+
+.risk-tab {
+    background: #0f1923;
+    color: #6b7c8d;
+    border: 1px solid #1e2d3d;
+    padding: 3px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.risk-tab:hover { border-color: #4fc3f7; color: #8899aa; }
+
+.risk-tab.active {
+    background: #1e2d3d;
+    color: #4fc3f7;
+    border-color: #4fc3f7;
+}
+
+.risk-tab[data-risk="safe"].active {
+    color: #66bb6a;
+    border-color: #66bb6a;
+}
+
+.risk-tab[data-risk="aggressive"].active {
+    color: #ff7043;
+    border-color: #ff7043;
+}
+
+/* Floor/ceiling range columns */
+td.range-floor {
+    color: #66bb6a;
+    font-size: 13px;
+}
+
+td.range-ceil {
+    color: #ff7043;
+    font-size: 13px;
 }
 
 /* Tables */

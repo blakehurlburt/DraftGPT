@@ -1,4 +1,4 @@
-nflreadpy
+nfl_data_py
 pandas
 polars
 pyarrow
