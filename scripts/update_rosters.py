@@ -18,7 +18,8 @@ import nflreadpy as nfl
 ROSTER_PATH = Path(__file__).parent.parent / "data" / "rosters.csv"
 HEADER_COMMENT = """# Roster overrides for 2026 projections (auto-generated + manual edits)
 # Edit this file to reflect trades, cuts, signings, and retirements.
-# Columns: player_name, team, position, status, adjustment_ppg
+# Columns: gsis_id, player_name, team, position, status, adjustment_ppg
+#   gsis_id: NFL unique player ID (do not edit — used for matching)
 #   status: ACT = active, TRADE = moved teams, CUT = released, RET = retired
 #   adjustment_ppg: manual PPG adjustment (e.g. +2.0 for scheme upgrade, -1.5 for coaching downgrade)
 # Lines starting with # are ignored. Re-run update_rosters.py to refresh.
@@ -63,7 +64,7 @@ def write_rosters(df):
     # Ensure adjustment_ppg column exists
     if "adjustment_ppg" not in df.columns:
         df = df.with_columns(pl.lit(0.0).alias("adjustment_ppg"))
-    csv_body = df.select(["player_name", "team", "position", "status", "adjustment_ppg"]).write_csv()
+    csv_body = df.select(["gsis_id", "player_name", "team", "position", "status", "adjustment_ppg"]).write_csv()
     with open(ROSTER_PATH, "w") as f:
         f.write(HEADER_COMMENT)
         f.write(csv_body)
@@ -128,9 +129,17 @@ def main():
         # Keep manually-set CUT/RET/TRADE rows that aren't in nflverse
         manual_rows = old.filter(pl.col("status").is_in(["CUT", "RET", "TRADE"]))
         if manual_rows.shape[0] > 0:
-            # Remove these players from nflverse data, keep manual version
             manual_names = manual_rows["player_name"].to_list()
             new_rosters = new_rosters.filter(~pl.col("player_name").is_in(manual_names))
+            # Resolve gsis_id for manual rows if missing
+            if "gsis_id" not in manual_rows.columns:
+                id_map = new_rosters.select(["gsis_id", "player_name"]).head(0)  # empty, just for schema
+                players = nfl.load_players().select(["gsis_id", "display_name", "position"]).drop_nulls()
+                id_map = (
+                    players.unique(subset=["display_name", "position"])
+                    .rename({"display_name": "player_name"})
+                )
+                manual_rows = manual_rows.join(id_map, on=["player_name", "position"], how="left")
             new_rosters = pl.concat([new_rosters, manual_rows.select(new_rosters.columns)], how="diagonal")
             print(f"  Preserved {manual_rows.shape[0]} manual override(s)")
 
@@ -138,7 +147,6 @@ def main():
         if "adjustment_ppg" in old.columns:
             adj = old.filter(pl.col("adjustment_ppg") != 0.0).select(["player_name", "adjustment_ppg"])
             if adj.shape[0] > 0:
-                # Drop the default adjustment column and merge old adjustments
                 if "adjustment_ppg" in new_rosters.columns:
                     new_rosters = new_rosters.drop("adjustment_ppg")
                 new_rosters = new_rosters.join(adj, on="player_name", how="left")

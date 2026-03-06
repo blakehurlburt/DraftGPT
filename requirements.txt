@@ -1,5 +1,6 @@
 nfl_data_py
-pandas
+nflreadpy
+pandas>=2.0
 polars
 pyarrow
 xgboost

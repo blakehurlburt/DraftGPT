@@ -46,7 +46,6 @@ Jordan Mason,RB,MIN,6.8,6.9,2.2,11.3,13.5,91,30,152,47
 Kimani Vidal,RB,LAC,7.3,6.3,2.9,13.1,12.4,90,36,163,48
 Nick Chubb,RB,HOU,6.9,7.4,2.3,11.2,12.9,89,29,144,49
 James Conner,RB,ARI,9.0,9.5,4.5,14.2,9.7,87,44,138,50
-Aaron Jones,RB,,7.1,7.3,4.5,12.3,12.1,86,55,149,51
 Jerome Ford,RB,CLE,7.4,5.3,2.1,10.0,11.1,82,23,112,52
 Austin Ekeler,RB,WAS,7.0,5.8,2.3,11.0,11.6,81,27,127,53
 Chuba Hubbard,RB,CAR,6.6,7.5,3.8,12.3,12.2,80,46,151,54
@@ -69,7 +68,6 @@ Samaje Perine,RB,CIN,4.8,4.3,1.7,8.8,11.7,56,20,103,73
 Ameer Abdullah,RB,IND,4.3,4.3,2.1,9.2,12.5,54,27,115,75
 Jaleel McLaughlin,RB,DEN,4.3,3.2,1.2,8.1,12.7,54,15,102,76
 Ray Davis,RB,BUF,3.9,3.7,1.6,7.7,13.7,54,22,106,77
-Kaleb Johnson,RB,,5.3,3.7,1.0,8.9,10.1,54,10,90,78
 Chris Rodriguez Jr.,RB,WAS,4.9,5.9,1.8,9.2,10.8,53,20,99,79
 Trevor Etienne,RB,CAR,3.8,2.4,0.9,6.5,13.8,53,12,90,80
 Emari Demercado,RB,ARI,4.4,3.7,1.4,9.2,11.0,48,15,102,81
@@ -84,7 +82,6 @@ Jeremy McNichols,RB,WAS,3.5,3.3,1.0,7.7,11.1,38,11,86,94
 Corey Kiner,RB,ARI,3.9,2.4,0.7,7.2,9.6,38,7,69,95
 LeQuint Allen Jr.,RB,JAX,3.0,1.7,1.2,6.0,12.6,37,15,75,96
 Zavier Scott,RB,MIN,3.4,3.4,1.1,7.7,10.6,36,12,82,97
-Josh Williams,RB,,4.1,2.4,0.6,6.8,8.9,36,5,60,98
 Kyle Juszczyk,RB,SF,3.3,2.9,1.6,6.7,10.8,35,18,73,99
 Tyler Badie,RB,DEN,2.8,0.9,0.3,6.6,12.3,34,3,82,101
 Braelon Allen,RB,NYJ,3.8,4.3,1.9,8.8,8.7,33,17,76,102
@@ -98,7 +95,7 @@ George Holani,RB,SEA,2.7,1.9,0.7,5.6,10.5,28,7,58,115
 Eric Gray,RB,NYG,2.8,2.3,0.6,4.5,9.0,25,5,40,116
 Will Shipley,RB,PHI,2.2,1.3,0.4,4.4,10.6,24,4,47,117
 Trayveon Williams,RB,CLE,2.5,1.8,0.9,5.1,9.1,23,8,47,119
-Chris Brooks,RB,,2.1,1.5,0.3,5.7,11.1,23,3,63,120
+Chris Brooks,RB,GB,2.1,1.5,0.3,5.7,11.1,23,3,63,120
 Dylan Laube,RB,LV,2.4,1.0,0.1,3.4,9.3,22,1,32,121
 DJ Giddens,RB,IND,2.4,1.4,0.8,6.2,9.5,22,8,58,122
 Hassan Haskins,RB,LAC,2.2,1.4,0.2,4.9,9.6,21,2,47,124

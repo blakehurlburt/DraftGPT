@@ -19,7 +19,7 @@ Garrett Wilson,WR,NYJ,13.6,12.2,8.7,17.5,12.3,168,107,217,19
 Ladd McConkey,WR,LAC,12.4,12.0,7.1,14.7,13.3,165,94,196,21
 Jameson Williams,WR,DET,12.6,13.1,8.8,16.3,12.9,163,114,210,22
 Rashee Rice,WR,KC,13.6,15.0,9.0,19.5,11.8,161,107,231,23
-Mike Evans,WR,,12.8,12.4,7.1,15.4,12.4,159,88,192,24
+Mike Evans,WR,TB,12.8,12.4,7.1,15.4,12.4,159,88,192,24
 Michael Wilson,WR,ARI,11.6,10.7,7.0,14.5,13.6,158,95,197,25
 Jayden Higgins,WR,HOU,10.7,9.7,4.7,13.8,14.8,158,69,203,26
 Wan'Dale Robinson,WR,NYG,10.9,10.8,7.9,16.1,14.3,156,114,230,27
@@ -28,7 +28,7 @@ Courtland Sutton,WR,DEN,12.1,11.8,9.3,16.1,12.7,154,119,205,29
 DK Metcalf,WR,PIT,11.0,10.4,7.4,15.3,13.7,151,102,210,30
 Keenan Allen,WR,LAC,10.5,10.0,5.6,13.3,13.8,146,77,184,31
 Deebo Samuel Sr.,WR,WAS,11.2,10.9,6.8,14.9,12.8,144,87,191,32
-Michael Pittman,WR,,10.6,10.7,7.2,14.1,13.6,144,98,192,33
+Michael Pittman,WR,IND,10.6,10.7,7.2,14.1,13.6,144,98,192,33
 Jerry Jeudy,WR,CLE,10.8,10.2,3.9,12.7,13.4,144,52,170,34
 Jordan Addison,WR,MIN,11.0,10.9,5.6,13.4,13.2,144,73,177,35
 Rome Odunze,WR,CHI,11.6,11.4,7.5,16.1,12.4,144,93,200,36
@@ -63,7 +63,7 @@ Cooper Kupp,WR,SEA,8.1,6.5,4.6,12.2,12.1,97,55,147,66
 Elic Ayomanor,WR,TEN,7.3,5.6,2.9,11.2,13.2,97,38,148,67
 John Metchie III,WR,NYJ,7.5,6.7,2.2,10.8,12.8,96,28,138,68
 Marvin Mims Jr.,WR,DEN,6.9,5.8,2.4,10.9,13.7,94,33,149,69
-Cedric Tillman,WR,,7.9,6.7,2.6,11.2,11.9,94,31,133,70
+Cedric Tillman,WR,CLE,7.9,6.7,2.6,11.2,11.9,94,31,133,70
 Isaac TeSlaa,WR,DET,7.7,7.2,3.0,11.3,12.2,94,37,139,71
 Christian Watson,WR,GB,9.0,9.0,6.7,15.3,10.3,93,69,158,72
 Jaylin Noel,WR,HOU,6.8,6.9,3.7,10.6,13.7,93,50,145,73
@@ -93,7 +93,7 @@ Tyler Lockett,WR,LV,5.1,4.8,2.6,9.6,13.0,67,34,125,100
 JuJu Smith-Schuster,WR,KC,5.2,5.1,2.2,9.8,13.0,67,28,127,102
 Tyrell Shavers,WR,BUF,6.3,5.8,1.8,10.0,10.6,67,19,106,103
 Savion Williams,WR,GB,5.6,4.8,2.1,9.0,11.9,67,24,107,104
-Kyle Williams,WR,,5.4,5.2,2.6,10.4,12.3,67,33,129,105
+Kyle Williams,WR,NE,5.4,5.2,2.6,10.4,12.3,67,33,129,105
 Kendrick Bourne,WR,SF,5.7,5.3,2.4,9.5,11.3,65,27,107,106
 Darius Slayton,WR,NYG,5.3,5.2,2.7,9.3,12.3,65,33,114,107
 Xavier Hutchinson,WR,HOU,4.9,4.9,1.7,7.9,13.1,64,23,103,108
@@ -133,7 +133,7 @@ Mitchell Tinsley,WR,CIN,3.6,3.8,1.3,8.8,10.3,37,14,90,147
 Jonathan Mingo,WR,DAL,3.9,3.0,1.1,6.9,9.5,37,10,66,148
 Dont'e Thornton Jr.,WR,LV,3.5,3.3,1.5,7.2,10.4,37,15,75,149
 Curtis Samuel,WR,BUF,3.5,3.5,1.4,8.2,10.4,36,15,86,150
-Isaiah Williams,WR,,3.4,3.3,0.5,8.2,10.6,36,6,87,152
+Isaiah Williams,WR,NYJ,3.4,3.3,0.5,8.2,10.6,36,6,87,152
 Devontez Walker,WR,BAL,3.5,3.1,1.0,7.3,9.7,35,9,71,153
 Jimmy Horn Jr.,WR,CAR,2.8,2.1,0.2,5.7,12.7,35,3,73,154
 Tahj Washington,WR,MIA,3.3,3.2,0.4,5.4,9.8,33,4,53,157
@@ -141,10 +141,8 @@ Malachi Corley,WR,CLE,3.4,2.5,1.1,7.9,9.9,33,11,78,158
 Tai Felton,WR,MIN,3.4,2.2,0.4,7.6,9.7,33,4,74,159
 Arian Smith,WR,NYJ,3.4,2.1,0.3,7.2,9.7,33,3,70,160
 Lil'Jordan Humphrey,WR,DEN,3.4,3.9,1.5,7.6,9.3,32,14,71,161
-Jacoby Jones,WR,,3.9,3.4,1.1,6.8,8.2,32,9,56,162
 Ronnie Bell,WR,NO,3.4,3.2,0.7,4.3,9.2,31,7,39,164
 LaJohntay Wester,WR,BAL,2.6,1.8,0.4,6.0,11.8,31,5,71,166
-Justin Watson,WR,,3.0,2.7,0.9,6.1,9.5,29,9,58,168
 Devin Duvernay,WR,CHI,2.4,1.8,0.3,5.3,11.9,29,3,63,169
 Dylan Drummond,WR,ATL,2.8,2.2,0.4,5.6,10.4,29,4,58,172
 KeAndre Lambert-Smith,WR,LAC,2.7,1.6,0.5,6.1,10.6,29,5,65,173
@@ -152,20 +150,19 @@ Mason Tipton,WR,NO,2.7,2.2,0.7,5.3,9.9,27,7,52,174
 Gage Larvadain,WR,CLE,2.5,1.6,0.1,5.4,10.6,27,1,57,175
 Gunner Olszewski,WR,NYG,2.6,1.3,0.1,4.8,10.1,26,1,48,176
 Jason Brownlee,WR,KC,2.9,2.0,0.6,4.9,8.4,24,5,41,182
-Ryan Miller,WR,,2.5,1.6,0.6,5.3,9.4,24,6,50,183
-Darius Cooper,WR,PHI,2.7,2.2,0.4,6.0,8.9,24,4,53,184
-Beaux Collins,WR,NYG,2.5,1.8,0.7,5.8,9.6,24,6,56,185
-Dante Pettis,WR,NO,3.1,2.3,0.8,6.6,7.4,23,6,49,186
-Cedrick Wilson Jr.,WR,MIA,2.5,2.3,0.7,5.1,8.6,21,6,44,192
-Scott Miller,WR,,2.1,1.5,0.3,5.7,10.1,21,3,57,193
-Tylan Wallace,WR,BAL,2.2,2.5,0.7,5.5,9.4,21,6,52,194
-Ben Skowronek,WR,PIT,2.0,1.5,0.4,3.6,10.7,21,5,39,195
-Nikko Remigio,WR,KC,2.1,0.9,0.1,3.0,10.0,21,1,31,196
-Jalen Brooks,WR,ARI,2.3,2.5,1.2,5.0,8.8,21,10,44,197
-Dalen Cambre,WR,NYG,2.5,1.6,0.1,6.1,8.3,21,1,51,199
-Laquon Treadwell,WR,IND,2.6,1.6,1.3,6.3,7.3,19,9,46,200
-Cody White,WR,,2.2,2.1,0.5,4.6,8.7,19,4,40,202
-Jake Bobo,WR,SEA,2.2,1.6,0.3,4.5,8.5,18,3,38,203
+Darius Cooper,WR,PHI,2.7,2.2,0.4,6.0,8.9,24,4,53,183
+Beaux Collins,WR,NYG,2.5,1.8,0.7,5.8,9.6,24,6,56,184
+Dante Pettis,WR,NO,3.1,2.3,0.8,6.6,7.4,23,6,49,185
+Cedrick Wilson Jr.,WR,MIA,2.5,2.3,0.7,5.1,8.6,21,6,44,191
+Scott Miller,WR,PIT,2.1,1.5,0.3,5.7,10.1,21,3,57,192
+Tylan Wallace,WR,BAL,2.2,2.5,0.7,5.5,9.4,21,6,52,193
+Ben Skowronek,WR,PIT,2.0,1.5,0.4,3.6,10.7,21,5,39,194
+Nikko Remigio,WR,KC,2.1,0.9,0.1,3.0,10.0,21,1,31,195
+Jalen Brooks,WR,ARI,2.3,2.5,1.2,5.0,8.8,21,10,44,196
+Dalen Cambre,WR,NYG,2.5,1.6,0.1,6.1,8.3,21,1,51,198
+Laquon Treadwell,WR,IND,2.6,1.6,1.3,6.3,7.3,19,9,46,199
+Cody White,WR,SEA,2.2,2.1,0.5,4.6,8.7,19,4,40,201
+Jake Bobo,WR,SEA,2.2,1.6,0.3,4.5,8.5,18,3,38,202
 Ke'Shawn Williams,WR,CIN,2.0,1.3,0.1,5.4,9.1,18,1,49,204
 Brycen Tremayne,WR,CAR,2.0,1.8,0.6,4.0,8.6,17,5,34,205
 Kameron Johnson,WR,TB,1.4,0.5,0.3,3.8,11.6,16,3,44,208
@@ -180,7 +177,6 @@ Bryce Oliver,WR,TEN,2.1,2.4,0.9,4.1,7.2,15,6,30,216
 Braxton Berrios,WR,HOU,1.4,1.4,0.3,3.8,10.2,14,3,39,217
 KhaDarel Hodge,WR,ATL,1.6,1.2,0.4,4.0,8.8,14,4,35,218
 Xavier Gipson,WR,NYG,1.5,0.7,0.1,3.0,9.5,14,1,29,219
-Charlie Jones,WR,,1.4,1.2,0.2,4.0,10.0,14,2,40,220
 Xavier Weaver,WR,ARI,1.5,1.7,0.6,3.8,9.6,14,5,37,221
 Deven Thompkins,WR,ATL,1.3,-0.1,0.5,3.4,9.9,13,5,33,223
 James Proche,WR,TEN,1.5,1.5,0.4,4.1,8.3,12,3,34,225

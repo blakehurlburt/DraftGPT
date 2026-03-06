@@ -17,50 +17,21 @@ OUTPUT_DIR = Path(__file__).parent.parent / "data" / "projections"
 
 
 def get_current_rosters():
-    """Load current rosters from rosters.csv."""
-    import nflreadpy as nfl
-
+    """Load current rosters from rosters.csv (requires gsis_id column)."""
     if not ROSTER_PATH.exists():
-        print("  rosters.csv not found — run 'python update_rosters.py' first")
-        print("  Falling back to nflverse weekly rosters...")
-        rw = nfl.load_rosters_weekly([2025])
-        latest = (
-            rw.sort("week", descending=True)
-            .group_by("gsis_id")
-            .first()
-            .select(["gsis_id", "team", "position", "status"])
-            .rename({"gsis_id": "player_id", "team": "current_team",
-                     "position": "current_position", "status": "current_status"})
+        raise FileNotFoundError(
+            "rosters.csv not found — run 'python scripts/update_rosters.py' first"
         )
-        return latest
 
     roster_df = pl.read_csv(ROSTER_PATH, comment_prefix="#")
     print(f"  Loaded {roster_df.shape[0]} players from rosters.csv")
 
-    name_map = (
-        nfl.load_players()
-        .select(["gsis_id", "display_name"])
-        .drop_nulls()
-        .unique(subset=["display_name"])
-        .rename({"gsis_id": "player_id", "display_name": "player_name"})
-    )
-
-    roster_df = roster_df.join(name_map, on="player_name", how="left")
-    unmatched = roster_df.filter(pl.col("player_id").is_null()).shape[0]
-    if unmatched > 0:
-        print(f"  Warning: {unmatched} players could not be matched to nflverse IDs")
-
-    roster_df = (
-        roster_df.filter(pl.col("player_id").is_not_null())
-        .select([
-            pl.col("player_id"),
-            pl.col("team").alias("current_team"),
-            pl.col("position").alias("current_position"),
-            pl.col("status").alias("current_status"),
-        ])
-    )
-
-    return roster_df
+    return roster_df.select([
+        pl.col("gsis_id").alias("player_id"),
+        pl.col("team").alias("current_team"),
+        pl.col("position").alias("current_position"),
+        pl.col("status").alias("current_status"),
+    ])
 
 
 def main():
@@ -96,17 +67,10 @@ def main():
     if ROSTER_PATH.exists():
         roster_raw = pl.read_csv(ROSTER_PATH, comment_prefix="#")
         if "adjustment_ppg" in roster_raw.columns:
-            import nflreadpy as _nfl
-            name_map = (
-                _nfl.load_players()
-                .select(["gsis_id", "display_name"])
-                .drop_nulls()
-                .unique(subset=["display_name"])
-                .rename({"gsis_id": "player_id", "display_name": "player_name"})
-            )
-            adj_df = roster_raw.select(["player_name", "adjustment_ppg"]).join(
-                name_map, on="player_name", how="left"
-            ).filter(pl.col("player_id").is_not_null()).select(["player_id", "adjustment_ppg"])
+            adj_df = roster_raw.select([
+                pl.col("gsis_id").alias("player_id"),
+                "adjustment_ppg",
+            ]).filter(pl.col("player_id").is_not_null())
             rosters = rosters.join(adj_df, on="player_id", how="left")
 
     # Rebuild with 2025 as the most recent season to project from
@@ -118,6 +82,12 @@ def main():
 
     # Join with rosters
     results = results.join(rosters, on="player_id", how="left")
+
+    # Fill missing current_team from the feature data's team column
+    if "team" in results.columns and "current_team" in results.columns:
+        results = results.with_columns(
+            pl.col("current_team").fill_null(pl.col("team"))
+        )
 
     # Filter to active players
     active_statuses = ["ACT", "RES", "PUP", "NFI"]
