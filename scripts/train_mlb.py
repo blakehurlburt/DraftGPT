@@ -14,6 +14,7 @@ import polars as pl
 
 from mlbdata.season_features import (
     build_batter_features, build_pitcher_features,
+    build_batter_projection_features, build_pitcher_projection_features,
     get_batter_feature_columns, get_pitcher_feature_columns,
     MAX_GAMES_BATTER, MAX_GAMES_PITCHER,
 )
@@ -111,8 +112,12 @@ def main():
         batter_df, get_batter_feature_columns, MAX_GAMES_BATTER, "Batter"
     )
 
+    # Build projection features (one row per player, latest season only)
+    print("\nBuilding batter projection features...")
+    bat_proj_df = build_batter_projection_features(SEASONS)
+
     bat_results = project_season(
-        bat_ppg, bat_games, batter_df, get_batter_feature_columns,
+        bat_ppg, bat_games, bat_proj_df, get_batter_feature_columns,
         MAX_GAMES_BATTER, bat_q
     )
 
@@ -127,8 +132,12 @@ def main():
         pitcher_df, get_pitcher_feature_columns, MAX_GAMES_PITCHER, "Pitcher"
     )
 
+    # Build projection features (one row per player, latest season only)
+    print("\nBuilding pitcher projection features...")
+    pit_proj_df = build_pitcher_projection_features(SEASONS)
+
     pit_results = project_season(
-        pit_ppg, pit_games, pitcher_df, get_pitcher_feature_columns,
+        pit_ppg, pit_games, pit_proj_df, get_pitcher_feature_columns,
         MAX_GAMES_PITCHER, pit_q
     )
 

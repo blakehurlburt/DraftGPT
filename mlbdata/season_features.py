@@ -704,6 +704,130 @@ def build_pitcher_features(seasons):
     return df
 
 
+def build_batter_projection_features(seasons):
+    """Build projection features for the next season (one row per batter).
+
+    Takes players from the most recent season and creates dummy rows for
+    season+1, then rebuilds prior-season features so the model can project.
+
+    Args:
+        seasons: Iterable of season years for historical data.
+
+    Returns:
+        Polars DataFrame with one row per batter, ready for projection.
+    """
+    print("=== Building MLB Batter Projection Features ===")
+
+    # Build full historical season data (without prior features yet)
+    season_df = _build_batter_seasons(seasons)
+    season_df = _assign_batter_positions(season_df, seasons)
+    season_df = _add_player_metadata(season_df)
+    season_df = _add_park_factors(season_df, seasons)
+
+    max_season = season_df["season"].max()
+    proj_year = max_season + 1
+    print(f"  Projecting from {max_season} → {proj_year}")
+
+    # Create dummy rows for the projection year
+    players_latest = season_df.filter(pl.col("season") == max_season)
+    dummy = players_latest.with_columns(pl.lit(proj_year).alias("season"))
+
+    # Null out current-season stats (targets we don't have yet)
+    id_cols = {"player_id", "season", "player_display_name", "position_group", "team"}
+    stat_cols = [c for c in dummy.columns if c not in id_cols]
+    dummy = dummy.with_columns(
+        [pl.lit(None).cast(dummy[c].dtype).alias(c) for c in stat_cols]
+    )
+    # Ensure schema compatibility (lit(proj_year) is i64, season_df may have i32)
+    for col in dummy.columns:
+        if col in season_df.columns and dummy[col].dtype != season_df[col].dtype:
+            dummy = dummy.with_columns(pl.col(col).cast(season_df[col].dtype))
+
+    # Append dummy rows and rebuild prior features
+    extended = pl.concat([season_df, dummy], how="diagonal")
+    extended = _build_prior_features_batter(extended)
+    extended = _add_roster_context(extended, seasons)
+    extended = _add_display_names(extended)
+
+    # Filter to projection year only
+    proj = extended.filter(pl.col("season") == proj_year)
+    proj = proj.filter(pl.col("prior1_ppg").is_not_null())
+
+    # Add dummy targets for column compatibility
+    proj = proj.with_columns([
+        pl.lit(0.0).alias("target_ppg"),
+        pl.lit(0.0).alias("target_games"),
+        pl.lit(0.0).alias("target_total"),
+    ])
+
+    # Bump age by 1 for projection year
+    if "age" in proj.columns:
+        proj = proj.with_columns((pl.col("age") + 1.0).alias("age"))
+
+    print(f"  Projection rows: {proj.shape[0]} batters")
+    return proj
+
+
+def build_pitcher_projection_features(seasons):
+    """Build projection features for the next season (one row per pitcher).
+
+    Args:
+        seasons: Iterable of season years for historical data.
+
+    Returns:
+        Polars DataFrame with one row per pitcher, ready for projection.
+    """
+    print("=== Building MLB Pitcher Projection Features ===")
+
+    # Build full historical season data
+    season_df = _build_pitcher_seasons(seasons)
+    season_df = _add_player_metadata(season_df)
+    season_df = _add_park_factors(season_df, seasons)
+
+    max_season = season_df["season"].max()
+    proj_year = max_season + 1
+    print(f"  Projecting from {max_season} → {proj_year}")
+
+    # Create dummy rows for the projection year
+    players_latest = season_df.filter(pl.col("season") == max_season)
+    dummy = players_latest.with_columns(pl.lit(proj_year).alias("season"))
+
+    # Null out current-season stats
+    id_cols = {"player_id", "season", "player_display_name", "position_group", "team"}
+    stat_cols = [c for c in dummy.columns if c not in id_cols]
+    dummy = dummy.with_columns(
+        [pl.lit(None).cast(dummy[c].dtype).alias(c) for c in stat_cols]
+    )
+    # Ensure schema compatibility
+    for col in dummy.columns:
+        if col in season_df.columns and dummy[col].dtype != season_df[col].dtype:
+            dummy = dummy.with_columns(pl.col(col).cast(season_df[col].dtype))
+
+    # Append dummy rows and rebuild prior features
+    extended = pl.concat([season_df, dummy], how="diagonal")
+    extended = _build_prior_features_pitcher(extended)
+    extended = _add_roster_context(extended, seasons)
+    extended = _add_display_names(extended)
+
+    # Filter to projection year only
+    proj = extended.filter(pl.col("season") == proj_year)
+    proj = proj.filter(pl.col("prior1_ppg").is_not_null())
+
+    # Add dummy targets
+    proj = proj.with_columns([
+        pl.lit(0.0).alias("target_ppg"),
+        pl.lit(0.0).alias("target_games"),
+        pl.lit(0.0).alias("target_total"),
+    ])
+
+    # Bump age by 1
+    if "age" in proj.columns:
+        proj = proj.with_columns((pl.col("age") + 1.0).alias("age"))
+
+    print(f"  Projection rows: {proj.shape[0]} pitchers")
+    return proj
+
+
 def get_batter_feature_columns(df):
     """Return feature columns for the batter model."""
     drop_cols = {
