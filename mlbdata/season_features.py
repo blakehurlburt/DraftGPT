@@ -391,27 +391,30 @@ def _build_prior_features_batter(df):
     df = df.with_columns(trend_exprs)
 
     # --- Career games played rate ---
+    # Cumulative games and seasons prior to current row, computed per player.
+    # shift(1) gives prior-season value; we accumulate all prior values.
     df = df.with_columns(
-        pl.col("games_played")
-        .shift(1)
-        .cum_sum()
-        .over("player_id")
-        .alias("_cum_games")
+        pl.col("games_played").shift(1).over("player_id").alias("_prior_gp")
     )
     df = df.with_columns(
-        pl.lit(1)
-        .shift(1)
-        .cum_sum()
-        .over("player_id")
-        .alias("_cum_seasons")
+        pl.col("_prior_gp").fill_null(0).cum_sum().over("player_id").alias("_cum_games")
     )
     df = df.with_columns(
-        (pl.col("_cum_games") / (pl.col("_cum_seasons") * MAX_GAMES_BATTER)).alias("career_games_rate")
+        pl.col("_prior_gp").is_not_null().cast(pl.Int32).cum_sum().over("player_id").alias("_cum_seasons")
+    )
+    df = df.with_columns(
+        pl.when(pl.col("_cum_seasons") > 0)
+        .then(pl.col("_cum_games") / (pl.col("_cum_seasons") * MAX_GAMES_BATTER))
+        .otherwise(None)
+        .alias("career_games_rate")
     )
 
     # --- Best prior PPG ---
     df = df.with_columns(
-        pl.col("ppg").shift(1).cum_max().over("player_id").alias("best_ppg")
+        pl.col("ppg").shift(1).over("player_id").alias("_prior_ppg_for_max")
+    )
+    df = df.with_columns(
+        pl.col("_prior_ppg_for_max").cum_max().over("player_id").alias("best_ppg")
     )
 
     # Clean up temp columns
@@ -468,26 +471,27 @@ def _build_prior_features_pitcher(df):
 
     # --- Career games rate ---
     df = df.with_columns(
-        pl.col("games_played")
-        .shift(1)
-        .cum_sum()
-        .over("player_id")
-        .alias("_cum_games")
+        pl.col("games_played").shift(1).over("player_id").alias("_prior_gp")
     )
     df = df.with_columns(
-        pl.lit(1)
-        .shift(1)
-        .cum_sum()
-        .over("player_id")
-        .alias("_cum_seasons")
+        pl.col("_prior_gp").fill_null(0).cum_sum().over("player_id").alias("_cum_games")
     )
     df = df.with_columns(
-        (pl.col("_cum_games") / (pl.col("_cum_seasons") * MAX_GAMES_PITCHER)).alias("career_games_rate")
+        pl.col("_prior_gp").is_not_null().cast(pl.Int32).cum_sum().over("player_id").alias("_cum_seasons")
+    )
+    df = df.with_columns(
+        pl.when(pl.col("_cum_seasons") > 0)
+        .then(pl.col("_cum_games") / (pl.col("_cum_seasons") * MAX_GAMES_PITCHER))
+        .otherwise(None)
+        .alias("career_games_rate")
     )
 
     # --- Best prior PPG ---
     df = df.with_columns(
-        pl.col("ppg").shift(1).cum_max().over("player_id").alias("best_ppg")
+        pl.col("ppg").shift(1).over("player_id").alias("_prior_ppg_for_max")
+    )
+    df = df.with_columns(
+        pl.col("_prior_ppg_for_max").cum_max().over("player_id").alias("best_ppg")
     )
 
     df = df.drop([c for c in df.columns if c.startswith("_")])

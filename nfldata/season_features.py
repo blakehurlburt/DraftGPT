@@ -309,6 +309,7 @@ def _build_prior_features(season_df):
     df = df.with_columns(
         pl.col("games_played")
         .shift(1)
+        .fill_null(0)
         .cum_sum()
         .over("player_id")
         .alias("_cum_games")
@@ -319,6 +320,7 @@ def _build_prior_features(season_df):
     df = df.with_columns(
         pl.lit(1)
         .shift(1)
+        .fill_null(0)
         .cum_sum()
         .over("player_id")
         .alias("_cum_seasons")
@@ -333,6 +335,7 @@ def _build_prior_features(season_df):
     df = df.with_columns(
         pl.col("_max_games_this_season")
         .shift(1)
+        .fill_null(0)
         .cum_sum()
         .over("player_id")
         .alias("_cum_max_games")
