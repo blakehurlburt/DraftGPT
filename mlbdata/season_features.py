@@ -860,6 +860,16 @@ def get_batter_feature_columns(df):
         "ppg", "games_played", "fantasy_points",
         # Targets
         "target_ppg", "target_games", "target_total",
+        # Pruned: highly correlated (|r| > 0.90) with a retained feature
+        "prior1_SLG",    # r=0.96 with prior1_OPS
+        "SLG_2yr",       # r=0.96 with OPS_2yr
+        "prior1_hr_pg",  # r=0.94 with prior1_ISO
+        "hr_pg_2yr",     # r=0.95 with ISO_2yr
+        "sb_pg_2yr",     # r=0.96 with prior1_sb_pg
+        "rbi_pg_2yr",    # r=0.92 with prior1_rbi_pg
+        "prior1_r_pg",   # r=0.90 with prior1_ppg
+        "AVG_2yr",       # r=0.88 with prior1_AVG (borderline, but AVG ⊂ OBP)
+        "OBP_2yr",       # r=0.89 with prior1_OBP
     }
     return sorted(c for c in df.columns if c not in drop_cols)
 
@@ -880,5 +890,12 @@ def get_pitcher_feature_columns(df):
         "ppg", "games_played", "fantasy_points",
         # Targets
         "target_ppg", "target_games", "target_total",
+        # Pruned: highly correlated (|r| > 0.90) with a retained feature
+        "prior1_BB_rate",  # r=0.99 with prior1_BB9
+        "prior1_K_rate",   # r=0.98 with prior1_K9
+        "K_rate_trend",    # r=0.95 with K9_trend
+        "prior1_ip_pg",    # r=0.99 with prior1_gs_ratio
+        "prior1_w_pg",     # r=0.93 with ppg_2yr
+        "w_pg_2yr",        # r=0.95 with ppg_2yr
     }
     return sorted(c for c in df.columns if c not in drop_cols)
