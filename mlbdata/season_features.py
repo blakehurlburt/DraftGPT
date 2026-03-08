@@ -14,6 +14,12 @@ from .fantasy_scoring import compute_batter_fpts, compute_pitcher_fpts
 MAX_GAMES_BATTER = 162
 MAX_GAMES_PITCHER = 162  # appearances, not starts
 
+# 2020 COVID-shortened season (60 games) — excluded from training and
+# evaluation. Removing it entirely means 2021 prior-season features
+# fall back to 2019 via the shift mechanism, which is more representative
+# than a 60-game sample.
+EXCLUDED_SEASONS = {2020}
+
 # Minimum games to include a player in the dataset
 _MIN_GAMES_BATTER = 50
 _MIN_GAMES_PITCHER = 20
@@ -27,7 +33,8 @@ def _build_batter_seasons(seasons):
     """Load batting data and compute per-game rates + fantasy points."""
     min_year = min(seasons)
     batting = loader.load_batting(min_year=min_year)
-    batting = batting.filter(pl.col("yearID").is_in(list(seasons)))
+    valid_seasons = [s for s in seasons if s not in EXCLUDED_SEASONS]
+    batting = batting.filter(pl.col("yearID").is_in(valid_seasons))
 
     # Filter to players with meaningful playing time
     batting = batting.filter(pl.col("G") >= _MIN_GAMES_BATTER)
@@ -126,7 +133,8 @@ def _build_pitcher_seasons(seasons):
     """Load pitching data and compute per-game rates + fantasy points."""
     min_year = min(seasons)
     pitching = loader.load_pitching(min_year=min_year)
-    pitching = pitching.filter(pl.col("yearID").is_in(list(seasons)))
+    valid_seasons = [s for s in seasons if s not in EXCLUDED_SEASONS]
+    pitching = pitching.filter(pl.col("yearID").is_in(valid_seasons))
 
     # Filter to meaningful contributors
     pitching = pitching.filter(pl.col("G") >= _MIN_GAMES_PITCHER)
