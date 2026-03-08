@@ -130,6 +130,12 @@ body {
     color: #8899aa;
 }
 
+.data-source-how {
+    color: #4a5a6a;
+    font-size: 10px;
+    font-style: italic;
+}
+
 .data-source-date {
     color: #6b7c8d;
     font-size: 11px;

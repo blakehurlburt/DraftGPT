@@ -109,18 +109,32 @@ _DATA_SOURCES = [
         "name": "ADP Rankings",
         "file": DATA_DIR / "FantasyPros_2025_Overall_ADP_Rankings.csv",
         "url": "https://www.fantasypros.com/nfl/adp/ppr-overall.php",
+        "how": "Manual download (CSV export)",
     },
     {
         "name": "Player Projections",
         "file": DATA_DIR / "projections" / "all_projections.csv",
-        "url": "https://www.fantasypros.com/nfl/projections/",
+        "url": "",
+        "how": "Run scripts/project_2026_v2.py",
+    },
+    {
+        "name": "Rosters",
+        "file": DATA_DIR / "rosters.csv",
+        "url": "",
+        "how": "Run scripts/update_rosters.py (fetches from nflverse)",
+    },
+    {
+        "name": "Lahman Baseball DB",
+        "file": DATA_DIR / "lahman_1871-2025_csv" / "People.csv",
+        "url": "https://sabr.app.box.com/s/y1prhc795jk8zvmelfd3jq7tl389y6cd",
+        "how": "Manual download + unzip",
     },
 ]
 
 
 @app.get("/api/data-info")
 async def data_info():
-    """Return last-modified timestamps for manually-downloaded data files."""
+    """Return last-modified timestamps for data files."""
     sources = []
     for src in _DATA_SOURCES:
         path = src["file"]
@@ -132,7 +146,8 @@ async def data_info():
         sources.append({
             "name": src["name"],
             "last_modified": last_modified,
-            "url": src["url"],
+            "url": src.get("url", ""),
+            "how": src.get("how", ""),
         })
     return JSONResponse({"sources": sources})
 

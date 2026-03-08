@@ -606,11 +606,15 @@
                     });
                     cls = age > STALE_MS ? "stale" : "fresh";
                 }
+                const howText = src.how ? `<span class="data-source-how">${src.how}</span>` : "";
+                const linkText = src.url
+                    ? `<a class="data-source-link" href="${src.url}" target="_blank" rel="noopener">source</a>`
+                    : "";
                 html += `<div class="data-source-row">
-                    <span class="data-source-name">${src.name}</span>
+                    <span class="data-source-name">${src.name} ${howText}</span>
                     <span>
                         <span class="data-source-date ${cls}">${dateStr}</span>
-                        <a class="data-source-link" href="${src.url}" target="_blank" rel="noopener">refresh</a>
+                        ${linkText}
                     </span>
                 </div>`;
             }
