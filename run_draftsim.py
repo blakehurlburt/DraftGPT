@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from draftsim.adp import write_adp_csvs
+from draftsim.adp import PLATFORMS
 from draftsim.config import LeagueConfig
 from draftsim.players import load_players
 from draftsim.results import (
@@ -76,11 +76,8 @@ def main():
     players = load_players(args.projections)
     print(f"  Loaded {len(players)} players")
 
-    # Generate mock ADP files
-    print("Generating mock ADP data...")
-    adp_paths = write_adp_csvs(players, seed=args.seed)
-    for platform, path in adp_paths.items():
-        print(f"  Wrote {path}")
+    # ADP data loaded from FantasyPros CSV (no generation needed)
+    print("ADP data: FantasyPros consensus + per-platform rankings")
 
     # Configure league
     config = LeagueConfig(num_teams=args.teams)

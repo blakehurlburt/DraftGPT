@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -29,6 +31,7 @@ log = logging.getLogger("draftassist")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
 
 STATIC_DIR = Path(__file__).parent / "static"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 SESSION_TIMEOUT = 2 * 60 * 60  # 2 hours in seconds
 CLEANUP_INTERVAL = 5 * 60  # check every 5 minutes
 
@@ -99,6 +102,39 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# Data sources tracked for freshness display
+_DATA_SOURCES = [
+    {
+        "name": "ADP Rankings",
+        "file": DATA_DIR / "FantasyPros_2025_Overall_ADP_Rankings.csv",
+        "url": "https://www.fantasypros.com/nfl/adp/ppr-overall.php",
+    },
+    {
+        "name": "Player Projections",
+        "file": DATA_DIR / "projections" / "all_projections.csv",
+        "url": "https://www.fantasypros.com/nfl/projections/",
+    },
+]
+
+
+@app.get("/api/data-info")
+async def data_info():
+    """Return last-modified timestamps for manually-downloaded data files."""
+    sources = []
+    for src in _DATA_SOURCES:
+        path = src["file"]
+        if path.exists():
+            mtime = os.path.getmtime(path)
+            last_modified = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+        else:
+            last_modified = None
+        sources.append({
+            "name": src["name"],
+            "last_modified": last_modified,
+            "url": src["url"],
+        })
+    return JSONResponse({"sources": sources})
 
 
 def _compute_adp_order(players: list[Player], platform: str) -> list[str]:
@@ -395,7 +431,7 @@ async def set_adp_platform(
     if not sess.connected:
         return JSONResponse({"error": "Not connected to a draft"}, status_code=400)
 
-    valid = {"consensus", "sleeper", "espn", "yahoo"}
+    valid = {"consensus", "sleeper", "espn", "cbs", "nfl", "rtsports", "fantrax"}
     if platform not in valid:
         return JSONResponse({"error": f"Invalid platform. Choose from: {valid}"}, status_code=400)
 

@@ -12,7 +12,7 @@ from draftsim.strategies import (
 )
 from draftsim.value import compute_replacement_levels, vbd, vona
 from draftsim.adp import (
-    generate_platform_adp, generate_consensus_adp, write_adp_csvs, load_adp,
+    generate_platform_adp, generate_consensus_adp, load_adp,
     PLATFORMS,
 )
 from draftsim.opponents import ADPOpponent
@@ -321,35 +321,27 @@ class TestStrategies:
 
 class TestADP:
     def test_platform_adp_length(self, sample_players):
-        rng = np.random.default_rng(42)
-        entries = generate_platform_adp(sample_players, "sleeper", rng)
+        entries = generate_platform_adp(sample_players, "sleeper")
         assert len(entries) == len(sample_players)
 
     def test_platform_adp_sorted(self, sample_players):
-        rng = np.random.default_rng(42)
-        entries = generate_platform_adp(sample_players, "espn", rng)
+        entries = generate_platform_adp(sample_players, "espn")
         adps = [adp for _, adp in entries]
         assert adps == sorted(adps)
 
     def test_consensus_adp(self, sample_players):
-        rng = np.random.default_rng(42)
-        entries = generate_consensus_adp(sample_players, rng)
+        entries = generate_consensus_adp(sample_players)
         assert len(entries) == len(sample_players)
 
-    def test_write_and_load(self, sample_players, tmp_path):
-        paths = write_adp_csvs(sample_players, output_dir=tmp_path, seed=42)
-        assert len(paths) == 4  # 3 platforms + consensus
-        for platform, path in paths.items():
-            assert path.exists()
-        # Load one back
-        adp = load_adp("consensus", adp_dir=tmp_path)
-        assert len(adp) == len(sample_players)
+    def test_load_adp(self):
+        adp = load_adp("consensus")
+        assert len(adp) > 0
         assert all(isinstance(v, float) for v in adp.values())
 
     def test_all_platforms_exist(self):
         assert "sleeper" in PLATFORMS
         assert "espn" in PLATFORMS
-        assert "yahoo" in PLATFORMS
+        assert "consensus" in PLATFORMS
 
 
 # ---------------------------------------------------------------------------

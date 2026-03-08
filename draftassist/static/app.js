@@ -581,6 +581,45 @@
         }
     }
 
+    // Data freshness: show when data files were last updated
+    (async function loadDataFreshness() {
+        const container = $("#data-freshness");
+        if (!container) return;
+        try {
+            const resp = await fetch("/api/data-info");
+            if (!resp.ok) return;
+            const data = await resp.json();
+            if (!data.sources || data.sources.length === 0) return;
+
+            let html = '<div class="data-freshness-title">Data Sources</div>';
+            const now = Date.now();
+            const STALE_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
+
+            for (const src of data.sources) {
+                let dateStr = "not found";
+                let cls = "";
+                if (src.last_modified) {
+                    const d = new Date(src.last_modified);
+                    const age = now - d.getTime();
+                    dateStr = d.toLocaleDateString(undefined, {
+                        month: "short", day: "numeric", year: "numeric",
+                    });
+                    cls = age > STALE_MS ? "stale" : "fresh";
+                }
+                html += `<div class="data-source-row">
+                    <span class="data-source-name">${src.name}</span>
+                    <span>
+                        <span class="data-source-date ${cls}">${dateStr}</span>
+                        <a class="data-source-link" href="${src.url}" target="_blank" rel="noopener">refresh</a>
+                    </span>
+                </div>`;
+            }
+            container.innerHTML = html;
+        } catch (e) {
+            // Silently ignore — non-critical UI
+        }
+    })();
+
     // Auto-reconnect: check URL params on page load
     (function autoConnect() {
         const params = new URLSearchParams(window.location.search);

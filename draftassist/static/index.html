@@ -21,6 +21,7 @@
                 <span id="connect-status"></span>
             </div>
             <p class="welcome-hint">Paste a Sleeper URL (e.g. sleeper.com/draft/nfl/123...) or just the draft ID</p>
+            <div id="data-freshness" class="data-freshness"></div>
         </div>
     </div>
 
@@ -58,10 +59,10 @@
                 <div id="filter-bar">
                     <div id="adp-tabs">
                         <span class="adp-label" title="ADP source used for opponent modeling in VONA calculations">ADP:</span>
-                        <button class="adp-tab active" data-adp="consensus" title="Average of Sleeper, ESPN, and Yahoo mock ADP">Consensus</button>
-                        <button class="adp-tab" data-adp="sleeper" title="Sleeper mock ADP — favors WRs and rookies">Sleeper</button>
-                        <button class="adp-tab" data-adp="espn" title="ESPN mock ADP — favors QBs and RBs">ESPN</button>
-                        <button class="adp-tab" data-adp="yahoo" title="Yahoo mock ADP — favors WRs with moderate rookie boost">Yahoo</button>
+                        <button class="adp-tab active" data-adp="consensus" title="FantasyPros consensus ADP (avg of ESPN, Sleeper, CBS, NFL, RTSports, Fantrax)">Consensus</button>
+                        <button class="adp-tab" data-adp="espn" title="ESPN platform ADP">ESPN</button>
+                        <button class="adp-tab" data-adp="sleeper" title="Sleeper platform ADP">Sleeper</button>
+                        <button class="adp-tab" data-adp="cbs" title="CBS platform ADP">CBS</button>
                     </div>
                     <div id="risk-tabs">
                         <span class="risk-label" title="Controls how much recommendations favor safe floor vs boom/bust ceiling picks">Risk:</span>
