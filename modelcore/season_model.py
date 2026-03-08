@@ -410,7 +410,7 @@ def project_season(ppg_model, games_model, features_df, feature_cols_fn,
 
     pred_total = pred_ppg * pred_games
 
-    id_cols = ["player_id", "player_display_name", "position_group"]
+    id_cols = ["player_id", "player_display_name", "position_group", "team"]
     available = [c for c in id_cols if c in features_df.columns]
 
     results = features_df.select(available).with_columns([

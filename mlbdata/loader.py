@@ -10,6 +10,27 @@ import zipfile
 DATA_DIR = Path(__file__).parent.parent / "data" / "lahman_1871-2025_csv"
 ZIP_PATH = Path(__file__).parent.parent / "data" / "lahman_1871-2025_csv.zip"
 
+# Lahman uses historical 3-char codes; map to modern abbreviations
+TEAM_CODE_MAP = {
+    "ANA": "LAA", "CAL": "LAA", "MON": "WSN", "FLO": "MIA",
+    "TBA": "TB",  "KCA": "KC",  "SLN": "STL", "SFN": "SF",
+    "NYN": "NYM", "NYA": "NYY", "LAN": "LAD", "SDN": "SD",
+    "CHN": "CHC", "CHA": "CWS", "WAS": "WSN", "ATH": "OAK",
+    "OAK": "OAK", "SEA": "SEA", "MIN": "MIN", "CLE": "CLE",
+    "DET": "DET", "BOS": "BOS", "BAL": "BAL", "TOR": "TOR",
+    "TEX": "TEX", "HOU": "HOU", "COL": "COL", "ARI": "ARI",
+    "CIN": "CIN", "PIT": "PIT", "MIL": "MIL", "ATL": "ATL",
+    "PHI": "PHI", "MIA": "MIA", "TB": "TB",   "KC": "KC",
+    "STL": "STL", "SF": "SF",   "NYM": "NYM", "NYY": "NYY",
+    "LAD": "LAD", "SD": "SD",   "CHC": "CHC", "CWS": "CWS",
+    "WSN": "WSN", "LAA": "LAA",
+}
+
+
+def normalize_team_code(code: str) -> str:
+    """Convert a Lahman team code to a modern abbreviation."""
+    return TEAM_CODE_MAP.get(code, code)
+
 
 def _ensure_extracted():
     """Extract the Lahman zip if the CSV directory doesn't exist."""
@@ -56,6 +77,10 @@ def load_batting(min_year: int = 2000) -> pl.DataFrame:
             + [pl.col(c).sum() for c in available_sum]
         )
     )
+    # Normalize team codes to modern abbreviations
+    df = df.with_columns(
+        pl.col("teamID").replace_strict(TEAM_CODE_MAP, default=pl.col("teamID"))
+    )
     return df
 
 
@@ -90,7 +115,10 @@ def load_pitching(min_year: int = 2000) -> pl.DataFrame:
         .otherwise(None)
         .alias("ERA")
     )
-
+    # Normalize team codes to modern abbreviations
+    df = df.with_columns(
+        pl.col("teamID").replace_strict(TEAM_CODE_MAP, default=pl.col("teamID"))
+    )
     return df
 
 
@@ -122,7 +150,11 @@ def load_appearances(min_year: int = 2000) -> pl.DataFrame:
 def load_teams(min_year: int = 2000) -> pl.DataFrame:
     """Load team-level stats including park factors."""
     df = _read_csv("Teams.csv")
-    return df.filter(pl.col("yearID") >= min_year)
+    df = df.filter(pl.col("yearID") >= min_year)
+    df = df.with_columns(
+        pl.col("teamID").replace_strict(TEAM_CODE_MAP, default=pl.col("teamID"))
+    )
+    return df
 
 
 def load_fielding(min_year: int = 2000) -> pl.DataFrame:

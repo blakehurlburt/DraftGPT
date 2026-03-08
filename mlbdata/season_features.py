@@ -375,18 +375,24 @@ def _build_prior_features_batter(df):
     df = df.with_columns(prior1_exprs)
 
     # --- Prior 2-year average ---
+    # When only 1 prior season exists (sophomore), fall back to prior1 value
     avg2_stats = ["ppg", "AVG", "OBP", "SLG", "OPS", "ISO", "hr_pg", "rbi_pg", "sb_pg"]
     prior2_exprs = []
     for stat in avg2_stats:
         if stat in df.columns:
             prior2_exprs.append(
-                ((pl.col(stat).shift(1) + pl.col(stat).shift(2)) / 2.0)
-                .over("player_id")
+                pl.when(pl.col(stat).shift(2).over("player_id").is_not_null())
+                .then(
+                    ((pl.col(stat).shift(1) + pl.col(stat).shift(2)) / 2.0)
+                    .over("player_id")
+                )
+                .otherwise(pl.col(stat).shift(1).over("player_id"))
                 .alias(f"{stat}_2yr")
             )
     df = df.with_columns(prior2_exprs)
 
     # --- Trajectory (year-over-year change) ---
+    # 0.0 when only 1 prior season exists (no trend measurable)
     trend_stats = ["ppg", "OPS", "hr_pg", "sb_pg", "K_rate", "BB_rate"]
     trend_exprs = []
     for stat in trend_stats:
@@ -394,6 +400,7 @@ def _build_prior_features_batter(df):
             trend_exprs.append(
                 (pl.col(stat).shift(1) - pl.col(stat).shift(2))
                 .over("player_id")
+                .fill_null(0.0)
                 .alias(f"{stat}_trend")
             )
     df = df.with_columns(trend_exprs)
@@ -454,18 +461,24 @@ def _build_prior_features_pitcher(df):
     df = df.with_columns(prior1_exprs)
 
     # --- Prior 2-year average ---
+    # When only 1 prior season exists, fall back to prior1 value
     avg2_stats = ["ppg", "ERA", "WHIP", "K9", "FIP", "w_pg", "sv_pg"]
     prior2_exprs = []
     for stat in avg2_stats:
         if stat in df.columns:
             prior2_exprs.append(
-                ((pl.col(stat).shift(1) + pl.col(stat).shift(2)) / 2.0)
-                .over("player_id")
+                pl.when(pl.col(stat).shift(2).over("player_id").is_not_null())
+                .then(
+                    ((pl.col(stat).shift(1) + pl.col(stat).shift(2)) / 2.0)
+                    .over("player_id")
+                )
+                .otherwise(pl.col(stat).shift(1).over("player_id"))
                 .alias(f"{stat}_2yr")
             )
     df = df.with_columns(prior2_exprs)
 
     # --- Trajectory ---
+    # 0.0 when only 1 prior season exists
     trend_stats = ["ppg", "ERA", "WHIP", "K9", "K_rate"]
     trend_exprs = []
     for stat in trend_stats:
@@ -473,6 +486,7 @@ def _build_prior_features_pitcher(df):
             trend_exprs.append(
                 (pl.col(stat).shift(1) - pl.col(stat).shift(2))
                 .over("player_id")
+                .fill_null(0.0)
                 .alias(f"{stat}_trend")
             )
     df = df.with_columns(trend_exprs)
