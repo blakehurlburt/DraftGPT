@@ -292,6 +292,7 @@ def _add_player_metadata(df):
         pl.col("weight").cast(pl.Float64, strict=False),
         "bats",
         "throws",
+        pl.col("debut").str.to_date("%Y-%m-%d", strict=False).alias("debut_date"),
     ]).rename({"playerID": "player_id"})
 
     df = df.join(meta, on="player_id", how="left")
@@ -307,6 +308,19 @@ def _add_player_metadata(df):
             .alias("age")
         )
         df = df.drop("birth_date")
+
+    # Compute years of MLB experience at start of season
+    if "debut_date" in df.columns:
+        df = df.with_columns(
+            pl.when(pl.col("debut_date").is_not_null())
+            .then(
+                ((pl.date(pl.col("season"), 4, 1) - pl.col("debut_date")).dt.total_days() / 365.25)
+                .round(1)
+                .clip(lower_bound=0.0)
+            ).otherwise(None)
+            .alias("years_exp")
+        )
+        df = df.drop("debut_date")
 
     # Encode handedness as numeric
     bat_map = {"R": 0.0, "L": 1.0, "B": 2.0}
@@ -760,9 +774,11 @@ def build_batter_projection_features(seasons):
         pl.lit(0.0).alias("target_total"),
     ])
 
-    # Bump age by 1 for projection year
+    # Bump age and years_exp by 1 for projection year
     if "age" in proj.columns:
         proj = proj.with_columns((pl.col("age") + 1.0).alias("age"))
+    if "years_exp" in proj.columns:
+        proj = proj.with_columns((pl.col("years_exp") + 1.0).alias("years_exp"))
 
     print(f"  Projection rows: {proj.shape[0]} batters")
     return proj
@@ -820,9 +836,11 @@ def build_pitcher_projection_features(seasons):
         pl.lit(0.0).alias("target_total"),
     ])
 
-    # Bump age by 1
+    # Bump age and years_exp by 1
     if "age" in proj.columns:
         proj = proj.with_columns((pl.col("age") + 1.0).alias("age"))
+    if "years_exp" in proj.columns:
+        proj = proj.with_columns((pl.col("years_exp") + 1.0).alias("years_exp"))
 
     print(f"  Projection rows: {proj.shape[0]} pitchers")
     return proj
