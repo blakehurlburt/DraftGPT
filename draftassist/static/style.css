@@ -181,8 +181,61 @@ body {
 }
 
 .connect-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     font-size: 13px;
     color: #6b7c8d;
+}
+
+.connect-info-label {
+    font-size: 11px;
+    color: #6b7c8d;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.header-input {
+    background: #0f1923;
+    border: 1px solid #2d3d4f;
+    color: #e0e6ed;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+.header-input:focus {
+    outline: none;
+    border-color: #4fc3f7;
+}
+
+.header-input-draft {
+    width: 120px;
+}
+
+.header-input-slot {
+    width: 48px;
+    text-align: center;
+}
+
+#header-teams {
+    font-size: 13px;
+    color: #6b7c8d;
+}
+
+.header-connect-btn {
+    background: #4fc3f7;
+    color: #0f1923;
+    border: none;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.header-connect-btn:hover {
+    background: #81d4fa;
 }
 
 /* Status Bar */
@@ -688,6 +741,83 @@ th.sortable .sort-arrow {
 
 .board-table th.user-col {
     color: #4fc3f7;
+}
+
+/* Simulation Panel */
+#sim-panel.hidden { display: none; }
+
+.sim-toggle-btn {
+    background: #0f1923;
+    color: #6b7c8d;
+    border: 1px solid #2d3d4f;
+    padding: 3px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 11px;
+}
+
+.sim-toggle-btn:hover { border-color: #4fc3f7; color: #8899aa; }
+
+#sim-content.hidden { display: none; }
+
+#sim-progress {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.sim-progress-bar {
+    flex: 1;
+    height: 6px;
+    background: #0f1923;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.sim-progress-fill {
+    height: 100%;
+    background: #4fc3f7;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+    width: 0%;
+}
+
+#sim-progress-text {
+    font-size: 12px;
+    color: #6b7c8d;
+    white-space: nowrap;
+}
+
+.sim-strategy-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 4px 0;
+    font-size: 13px;
+    border-bottom: 1px solid #1e2d3d;
+}
+
+.sim-strat-name {
+    font-weight: 600;
+    color: #4fc3f7;
+    min-width: 48px;
+}
+
+.sim-strat-mean {
+    color: #e0e6ed;
+}
+
+.sim-strat-range {
+    color: #6b7c8d;
+    font-size: 12px;
+}
+
+/* Sim value column */
+td.sim-value {
+    color: #81d4fa;
+    font-weight: 500;
+    font-size: 13px;
 }
 
 /* Responsive */

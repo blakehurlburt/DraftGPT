@@ -125,6 +125,20 @@ class DraftState:
         """Get available players at a position, sorted by projected_total desc."""
         return [p for p in self.available if p.position == position]
 
+    def copy(self) -> "DraftState":
+        """Shallow-copy for simulation branching.
+
+        Player objects are effectively immutable, so we only copy the
+        mutable containers (available list, team rosters).
+        """
+        return DraftState(
+            config=self.config,
+            available=list(self.available),
+            teams=[list(t) for t in self.teams],
+            pick_order=self.pick_order,
+            current_pick=self.current_pick,
+        )
+
     def picks_remaining(self, team_idx: int) -> int:
         """How many picks this team has left including current."""
         return sum(

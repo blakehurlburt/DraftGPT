@@ -7,7 +7,14 @@ from dataclasses import dataclass
 from draftsim.draft import DraftState
 from draftsim.players import Player
 from draftsim.strategies import STRATEGIES, _var_bonus
-from draftsim.value import compute_replacement_levels, vbd, vona
+from draftsim.value import (
+    compute_dynamic_replacement_levels,
+    compute_replacement_levels,
+    marginal_value_discount,
+    vbd,
+    vona,
+    vona_weight,
+)
 
 
 @dataclass
@@ -26,21 +33,27 @@ def _compute_strategy_score(
     team_idx: int,
     adp_order: list[str] | None,
     risk_profile: str = "balanced",
+    pos_vona_cache: dict[str, float] | None = None,
 ) -> float:
     """Compute the score the strategy uses to rank this player."""
     var = _var_bonus(player, state, team_idx, risk_profile)
+    roster = state.teams[team_idx] if team_idx < len(state.teams) else []
+    discount = marginal_value_discount(player, roster, state.config)
     if strategy_name == "bpa":
         return player.projected_total + var
     elif strategy_name == "vona":
         player_vbd = vbd(player, replacement)
-        if adp_order:
-            pos_vona = vona(state, team_idx, player.position, adp_order)
+        weight = vona_weight(state.current_round, state.config.num_rounds)
+        if pos_vona_cache is not None:
+            pos_v = pos_vona_cache.get(player.position, 0.0)
+        elif adp_order:
+            pos_v = vona(state, team_idx, player.position, adp_order)
         else:
-            pos_vona = 0.0
-        return player_vbd + pos_vona * 0.5 + var
+            pos_v = 0.0
+        return player_vbd * discount + pos_v * weight + var
     else:
         # vbd, zero-rb, robust-rb all use VBD as their core metric
-        return vbd(player, replacement) + var
+        return vbd(player, replacement) * discount + var
 
 
 def top_n_picks(
@@ -62,8 +75,15 @@ def top_n_picks(
     if state.is_complete:
         return []
 
-    all_players = kwargs.get("players") or state.available
-    replacement = compute_replacement_levels(all_players, state.config)
+    replacement = compute_dynamic_replacement_levels(
+        state.available, state.config, state.teams,
+    )
+
+    # Pre-compute VONA cache for vona strategy
+    pos_vona_cache: dict[str, float] | None = None
+    if strategy_name == "vona" and adp_order:
+        positions = {p.position for p in state.available}
+        pos_vona_cache = {pos: vona(state, team_idx, pos, adp_order) for pos in positions}
 
     # Include adp_order and risk_profile in kwargs for strategies
     strategy_kwargs = dict(kwargs)
@@ -86,7 +106,7 @@ def top_n_picks(
 
         score = _compute_strategy_score(
             strategy_name, player, replacement, state, team_idx, adp_order,
-            risk_profile,
+            risk_profile, pos_vona_cache,
         )
 
         picks.append(Recommendation(

@@ -42,6 +42,46 @@ def _generate_adp_for_sim(
     return {p.name: adp for p, adp in entries}
 
 
+def _run_single_sim(
+    state: DraftState,
+    user_slot: int,
+    first_pick: Player | None,
+    strategy_fn,
+    opponent: ADPOpponent,
+    adp_order: list[str],
+    players: list[Player],
+    config: LeagueConfig,
+) -> float:
+    """Run one simulation from current state to completion.
+
+    If *first_pick* is not None, it is forced as the user's immediate pick
+    before the rest of the draft continues normally.
+
+    Returns the user's optimal lineup total.
+    """
+    sim_state = state.copy()
+
+    # Force the first pick if provided
+    if first_pick is not None and not sim_state.is_complete:
+        if sim_state.current_team_idx == user_slot and first_pick in sim_state.available:
+            sim_state.make_pick(first_pick)
+
+    # Run the remaining draft
+    while not sim_state.is_complete:
+        team_idx = sim_state.current_team_idx
+        if team_idx == user_slot:
+            player = strategy_fn(
+                sim_state, team_idx, players=players, adp_order=adp_order,
+            )
+        else:
+            player = opponent.pick(sim_state, team_idx)
+        sim_state.make_pick(player)
+
+    roster = sim_state.team_roster(user_slot)
+    _, lineup_total = compute_optimal_lineup(roster, config)
+    return lineup_total
+
+
 def run_simulation(
     players: list[Player],
     sim_config: SimulationConfig,
@@ -103,31 +143,25 @@ def run_simulation(
                 state = DraftState.create(config, players)
                 opponent = ADPOpponent(adp, sim_rng)
 
-                # Run the draft
-                while not state.is_complete:
-                    team_idx = state.current_team_idx
-
-                    if team_idx == slot:
-                        # User's pick — use strategy
-                        player = strategy_fn(
-                            state, team_idx,
-                            players=players,
-                            adp_order=adp_order,
-                        )
-                    else:
-                        # Opponent pick
-                        player = opponent.pick(state, team_idx)
-
-                    state.make_pick(player)
-
-                # Score the user's roster
-                roster = state.team_roster(slot)
-                _, lineup_total = compute_optimal_lineup(roster, config)
+                lineup_total = _run_single_sim(
+                    state, slot, None, strategy_fn,
+                    opponent, adp_order, players, config,
+                )
                 results[key].append(lineup_total)
 
                 # Store sample rosters for reporting
                 if sim_idx < 3:
-                    sample_rosters[(slot, strategy_name, sim_idx)] = list(roster)
+                    # Re-run to capture roster (cheap for first 3)
+                    state2 = DraftState.create(config, players)
+                    opponent2 = ADPOpponent(adp, np.random.default_rng(sim_rng.integers(0, 2**31)))
+                    while not state2.is_complete:
+                        tidx = state2.current_team_idx
+                        if tidx == slot:
+                            p = strategy_fn(state2, tidx, players=players, adp_order=adp_order)
+                        else:
+                            p = opponent2.pick(state2, tidx)
+                        state2.make_pick(p)
+                    sample_rosters[(slot, strategy_name, sim_idx)] = list(state2.team_roster(slot))
 
             mean = np.mean(results[key])
             std = np.std(results[key])

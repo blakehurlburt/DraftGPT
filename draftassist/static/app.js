@@ -12,7 +12,10 @@
     const draftIdInput = $("#draft-id");
     const userSlotInput = $("#user-slot");
     const connectStatus = $("#connect-status");
-    const connectedDraftLabel = $("#connected-draft-label");
+    const headerDraftId = $("#header-draft-id");
+    const headerSlot = $("#header-slot");
+    const headerTeams = $("#header-teams");
+    const headerConnectBtn = $("#header-connect-btn");
     const statusBar = $("#status-bar");
     const mainContent = $("#main-content");
     const turnIndicator = $("#turn-indicator");
@@ -28,6 +31,13 @@
     const posFilter = $("#pos-filter");
     const scoreHeader = $("#score-header");
     const showMoreBtn = $("#show-more-btn");
+    const simPanel = $("#sim-panel");
+    const simContent = $("#sim-content");
+    const simToggle = $("#sim-toggle");
+    const simProgressFill = $("#sim-progress-fill");
+    const simProgressText = $("#sim-progress-text");
+    const simStrategies = $("#sim-strategies");
+    const simValueHeader = $("#sim-value-header");
 
     let currentStrategy = "vbd";
     let currentAdp = "consensus";
@@ -41,6 +51,8 @@
     let connectedSlot = null;
     let sessionId = null;
     let currentView = "ticker";  // "ticker" or "board"
+    let simData = null;  // latest sim snapshot
+    let simCollapsed = false;
 
     // Extra recommendations fetched via "show more"
     let extraRecs = {};       // strategy -> array of additional recs
@@ -164,6 +176,13 @@
                 renderBoard(currentState);
             }
         });
+    });
+
+    // Sim panel toggle
+    simToggle.addEventListener("click", () => {
+        simCollapsed = !simCollapsed;
+        simContent.classList.toggle("hidden", simCollapsed);
+        simToggle.textContent = simCollapsed ? "Show" : "Hide";
     });
 
     // Sortable column headers
@@ -342,17 +361,14 @@
 
         welcomeScreen.classList.add("hidden");
         connectionBar.classList.remove("hidden");
-        const details = data
-            ? `${data.num_teams} teams, ${data.players_matched} players`
-            : "";
-        connectedDraftLabel.textContent =
-            `Draft ${draftId.slice(-8)} — Slot ${slot}` +
-            (details ? ` — ${details}` : "");
+        headerDraftId.value = draftId;
+        headerSlot.value = slot;
+        headerTeams.textContent = data ? `${data.num_teams} teams` : "";
         statusBar.classList.remove("hidden");
         mainContent.classList.remove("hidden");
     }
 
-    // Connect button click
+    // Connect button click (welcome screen)
     connectBtn.addEventListener("click", () => {
         const draftId = parseDraftId(draftIdInput.value);
         const slot = parseInt(userSlotInput.value, 10);
@@ -367,6 +383,16 @@
         connectToDraft(draftId, slot, null);
     });
 
+    // Header connect button (reconnect / change draft)
+    headerConnectBtn.addEventListener("click", () => {
+        const draftId = parseDraftId(headerDraftId.value);
+        const slot = parseInt(headerSlot.value, 10);
+        if (!draftId || !slot || slot < 1) return;
+        if (eventSource) eventSource.close();
+        sessionId = null;
+        connectToDraft(draftId, slot, null);
+    });
+
     function startSSE() {
         if (eventSource) eventSource.close();
 
@@ -375,7 +401,15 @@
         eventSource.addEventListener("draft_update", (e) => {
             const state = JSON.parse(e.data);
             resetExtraRecs();  // new picks invalidate extra recs
+            simData = null;  // new picks invalidate sim results
             updateUI(state);
+        });
+
+        eventSource.addEventListener("sim_update", (e) => {
+            simData = JSON.parse(e.data);
+            renderSimInsights(simData);
+            // Update sim value column in existing rec table if visible
+            if (currentState) renderRecommendations(currentState);
         });
 
         eventSource.onerror = () => {
@@ -406,6 +440,7 @@
         renderRoster(state);
         renderTicker(state);
         renderBoard(state);
+        renderSimInsights(simData);
 
         // Prefetch more recs in background when it's our turn
         if (state.is_my_turn && !Object.keys(prefetchedRecs).length) {
@@ -430,19 +465,28 @@
         const hasMore = filtered.length > displayCount;
         filtered = filtered.slice(0, displayCount);
 
+        const colSpan = simData ? "10" : "9";
+
         if (!filtered.length) {
             const msg = !allRecs.length
                 ? (state.is_my_turn ? "No recommendations available" : "Recommendations appear on your turn")
                 : "No players match current filters";
             recBody.innerHTML =
-                '<tr><td colspan="9" class="empty-msg">' + msg + "</td></tr>";
+                '<tr><td colspan="' + colSpan + '" class="empty-msg">' + msg + "</td></tr>";
             showMoreBtn.classList.add("hidden");
             return;
         }
 
+        const showSim = !!simData;
+
         recBody.innerHTML = filtered
             .map(
-                (r) => `
+                (r) => {
+                    const sv = showSim ? getSimValue(r.name) : null;
+                    const simCell = showSim
+                        ? `<td class="sim-value">${sv != null ? sv.toFixed(1) : "—"}</td>`
+                        : "";
+                    return `
             <tr>
                 <td>${r.rank}</td>
                 <td><strong>${r.name}</strong></td>
@@ -453,7 +497,9 @@
                 <td class="range-ceil">${r.total_ceiling || "—"}</td>
                 <td>${r.strategy_score ?? "—"}</td>
                 <td>${r.adp && r.adp < 999 ? r.adp : "—"}</td>
-            </tr>`
+                ${simCell}
+            </tr>`;
+                }
             )
             .join("");
 
@@ -579,6 +625,53 @@
                 icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏈</text></svg>",
             });
         }
+    }
+
+    function renderSimInsights(data) {
+        if (!data || !data.sims_target) {
+            simPanel.classList.add("hidden");
+            simValueHeader.classList.add("hidden");
+            return;
+        }
+
+        simPanel.classList.remove("hidden");
+        simValueHeader.classList.remove("hidden");
+
+        // Progress bar
+        const pct = Math.min(100, (data.sims_completed / data.sims_target) * 100);
+        simProgressFill.style.width = pct + "%";
+        const done = data.sims_completed >= data.sims_target;
+        simProgressText.textContent = done
+            ? `Complete (${data.sims_completed} sims)`
+            : `Simulating... ${data.sims_completed}/${data.sims_target}`;
+
+        // Strategy summaries
+        const strats = data.strategies || {};
+        let html = "";
+        for (const [name, sr] of Object.entries(strats)) {
+            html += `<div class="sim-strategy-row">
+                <span class="sim-strat-name">${name.toUpperCase()}</span>
+                <span class="sim-strat-mean">${sr.mean.toFixed(1)} pts</span>
+                <span class="sim-strat-range">${sr.p10.toFixed(0)}&ndash;${sr.p90.toFixed(0)}</span>
+            </div>`;
+        }
+        simStrategies.innerHTML = html;
+    }
+
+    function getSimValue(playerName) {
+        if (!simData || !simData.strategies) return null;
+        // Use the current strategy's pick_values if available
+        const sr = simData.strategies[currentStrategy];
+        if (sr && sr.pick_values && sr.pick_values[playerName] != null) {
+            return sr.pick_values[playerName];
+        }
+        // Fallback: check all strategies
+        for (const sr2 of Object.values(simData.strategies)) {
+            if (sr2.pick_values && sr2.pick_values[playerName] != null) {
+                return sr2.pick_values[playerName];
+            }
+        }
+        return null;
     }
 
     // Data freshness: show when data files were last updated

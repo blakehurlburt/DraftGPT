@@ -5,7 +5,15 @@ from __future__ import annotations
 from .config import LeagueConfig
 from .draft import DraftState
 from .players import Player
-from .value import compute_replacement_levels, vbd, variance_bonus, vona
+from .value import (
+    compute_dynamic_replacement_levels,
+    compute_replacement_levels,
+    marginal_value_discount,
+    vbd,
+    variance_bonus,
+    vona,
+    vona_weight,
+)
 
 
 def _eligible(state: DraftState, team_idx: int) -> list[Player]:
@@ -57,6 +65,13 @@ def pick_bpa(state: DraftState, team_idx: int, **kwargs) -> Player:
     return max(eligible, key=lambda p: p.projected_total + _var_bonus(p, state, team_idx, risk))
 
 
+def _dynamic_repl(state: DraftState, players: list[Player] | None = None) -> dict[str, float]:
+    """Compute dynamic replacement levels from current draft state."""
+    return compute_dynamic_replacement_levels(
+        state.available, state.config, state.teams,
+    )
+
+
 def pick_vbd(state: DraftState, team_idx: int, players: list[Player] | None = None, **kwargs) -> Player:
     """Value Based Drafting — highest value over replacement."""
     eligible = _eligible(state, team_idx)
@@ -64,11 +79,15 @@ def pick_vbd(state: DraftState, team_idx: int, players: list[Player] | None = No
     if forced:
         return forced
 
-    all_players = players or state.available
-    replacement = compute_replacement_levels(all_players, state.config)
+    replacement = _dynamic_repl(state, players)
     risk = kwargs.get("risk_profile", "balanced")
+    roster = state.teams[team_idx] if team_idx < len(state.teams) else []
 
-    return max(eligible, key=lambda p: vbd(p, replacement) + _var_bonus(p, state, team_idx, risk))
+    def _score(p):
+        discount = marginal_value_discount(p, roster, state.config)
+        return vbd(p, replacement) * discount + _var_bonus(p, state, team_idx, risk)
+
+    return max(eligible, key=_score)
 
 
 def pick_vona(
@@ -78,7 +97,7 @@ def pick_vona(
     players: list[Player] | None = None,
     **kwargs,
 ) -> Player:
-    """VONA — pick the position with steepest upcoming drop-off."""
+    """VONA — scores ALL eligible players using cached per-position VONA."""
     eligible = _eligible(state, team_idx)
     forced = _force_need_pick(state, team_idx, eligible)
     if forced:
@@ -87,32 +106,22 @@ def pick_vona(
     if adp_order is None:
         adp_order = [p.name for p in sorted(state.available, key=lambda p: p.projected_total, reverse=True)]
 
-    all_players = players or state.available
-    replacement = compute_replacement_levels(all_players, state.config)
-
+    replacement = _dynamic_repl(state, players)
     risk = kwargs.get("risk_profile", "balanced")
+    roster = state.teams[team_idx] if team_idx < len(state.teams) else []
+    weight = vona_weight(state.current_round, state.config.num_rounds)
 
-    # For each position, compute VONA and find best candidate
-    best_pick = None
-    best_score = float("-inf")
+    # Cache VONA per position once
+    positions = {p.position for p in eligible}
+    pos_vona_cache = {pos: vona(state, team_idx, pos, adp_order) for pos in positions}
 
-    for pos in ["QB", "RB", "WR", "TE"]:
-        pos_eligible = [p for p in eligible if p.position == pos]
-        if not pos_eligible:
-            continue
+    def _score(p):
+        discount = marginal_value_discount(p, roster, state.config)
+        return (vbd(p, replacement) * discount
+                + pos_vona_cache.get(p.position, 0.0) * weight
+                + _var_bonus(p, state, team_idx, risk))
 
-        top_player = max(pos_eligible, key=lambda p: p.projected_total)
-        player_vbd = vbd(top_player, replacement)
-        pos_vona = vona(state, team_idx, pos, adp_order)
-
-        # Combined score: VBD baseline + VONA urgency + variance
-        score = player_vbd + pos_vona * 0.5 + _var_bonus(top_player, state, team_idx, risk)
-
-        if score > best_score:
-            best_score = score
-            best_pick = top_player
-
-    return best_pick or max(eligible, key=lambda p: p.projected_total)
+    return max(eligible, key=_score)
 
 
 def pick_zero_rb(
@@ -135,9 +144,12 @@ def pick_zero_rb(
         # Avoid RBs in early rounds
         non_rb = [p for p in eligible if p.position != "RB"]
         if non_rb:
-            all_players = players or state.available
-            replacement = compute_replacement_levels(all_players, state.config)
-            return max(non_rb, key=lambda p: vbd(p, replacement) + _var_bonus(p, state, team_idx, risk))
+            replacement = _dynamic_repl(state, players)
+            roster = state.teams[team_idx] if team_idx < len(state.teams) else []
+            return max(non_rb, key=lambda p: (
+                vbd(p, replacement) * marginal_value_discount(p, roster, state.config)
+                + _var_bonus(p, state, team_idx, risk)
+            ))
 
     # After round 4, use VBD for remaining picks
     return pick_vbd(state, team_idx, players=players, risk_profile=risk)
@@ -164,9 +176,12 @@ def pick_robust_rb(
         # Prioritize RBs early (take top RB if decent value)
         rbs = [p for p in eligible if p.position == "RB"]
         if rbs:
-            all_players = players or state.available
-            replacement = compute_replacement_levels(all_players, state.config)
-            score_fn = lambda p: vbd(p, replacement) + _var_bonus(p, state, team_idx, risk)
+            replacement = _dynamic_repl(state, players)
+            roster = state.teams[team_idx] if team_idx < len(state.teams) else []
+            score_fn = lambda p: (
+                vbd(p, replacement) * marginal_value_discount(p, roster, state.config)
+                + _var_bonus(p, state, team_idx, risk)
+            )
             top_rb = max(rbs, key=score_fn)
             top_overall = max(eligible, key=score_fn)
 

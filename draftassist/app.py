@@ -21,7 +21,9 @@ from sse_starlette.sse import EventSourceResponse
 
 from draftsim.adp import generate_consensus_adp, generate_platform_adp
 from draftsim.players import Player, load_players
-from draftsim.value import compute_replacement_levels, vbd
+from draftsim.value import compute_dynamic_replacement_levels, compute_replacement_levels, vbd
+
+from draftsim.live_sim import SimSnapshot, run_live_simulation
 
 from .bridge import build_player_index, config_from_sleeper_meta, rebuild_draft_state
 from .recommender import get_all_recommendations
@@ -55,6 +57,10 @@ class DraftSession:
     adp_order: list[str] = field(default_factory=list)
     risk_profile: str = "balanced"  # "safe", "balanced", "aggressive"
     last_activity: float = field(default_factory=time.monotonic)
+    # Live simulation state
+    sim_task: asyncio.Task | None = None
+    sim_cancel: asyncio.Event = field(default_factory=asyncio.Event)
+    sim_snapshot: dict | None = None
 
 
 sessions: dict[str, DraftSession] = {}
@@ -81,8 +87,12 @@ async def _cleanup_loop():
         ]
         for sid in expired:
             sess = sessions.pop(sid, None)
-            if sess and sess.poll_task and not sess.poll_task.done():
-                sess.poll_task.cancel()
+            if sess:
+                if sess.poll_task and not sess.poll_task.done():
+                    sess.poll_task.cancel()
+                if sess.sim_task and not sess.sim_task.done():
+                    sess.sim_cancel.set()
+                    sess.sim_task.cancel()
             log.info("Cleaned up expired session %s", sid)
 
 
@@ -94,10 +104,13 @@ async def lifespan(app: FastAPI):
     # Cancel cleanup task
     if _cleanup_task and not _cleanup_task.done():
         _cleanup_task.cancel()
-    # Cancel all session poll tasks on shutdown
+    # Cancel all session poll/sim tasks on shutdown
     for sid, sess in sessions.items():
         if sess.poll_task and not sess.poll_task.done():
             sess.poll_task.cancel()
+        if sess.sim_task and not sess.sim_task.done():
+            sess.sim_cancel.set()
+            sess.sim_task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -227,7 +240,10 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
     else:
         roster = []
 
-    replacement = compute_replacement_levels(players, config) if players else {}
+    replacement = (
+        compute_dynamic_replacement_levels(state.available, config, state.teams)
+        if players else {}
+    )
     for p in roster:
         user_roster.append({
             "name": p.name,
@@ -289,6 +305,63 @@ def _push_to_subscribers(sess: DraftSession, payload):
         sess.subscribers.remove(q)
 
 
+def _push_sim_to_subscribers(sess: DraftSession, payload: dict):
+    """Push a sim_update event to all SSE subscriber queues."""
+    wrapped = {"__event__": "sim_update", **payload}
+    dead = []
+    for q in sess.subscribers:
+        try:
+            q.put_nowait(wrapped)
+        except asyncio.QueueFull:
+            pass
+    for q in dead:
+        sess.subscribers.remove(q)
+
+
+async def _cancel_sim(sess: DraftSession):
+    """Cancel any running simulation."""
+    if sess.sim_task and not sess.sim_task.done():
+        sess.sim_cancel.set()
+        try:
+            await asyncio.wait_for(sess.sim_task, timeout=5)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            sess.sim_task.cancel()
+    sess.sim_task = None
+
+
+def _start_sim(sess: DraftSession, state: DraftState):
+    """Start a live simulation task for the current draft state."""
+    sess.sim_cancel = asyncio.Event()
+    sess.sim_snapshot = None
+
+    strategy_names = ["vbd", "vona", "bpa"]
+
+    async def _on_snapshot(snap: SimSnapshot):
+        payload = snap.to_dict()
+        sess.sim_snapshot = payload
+        _push_sim_to_subscribers(sess, payload)
+
+    async def _run():
+        try:
+            await run_live_simulation(
+                state=state,
+                user_slot=sess.user_slot,
+                players=sess.players,
+                adp_order=sess.adp_order or None,
+                strategies=strategy_names,
+                cancel_event=sess.sim_cancel,
+                on_snapshot=_on_snapshot,
+                batch_size=50,
+                max_sims=500,
+                top_n_candidates=15,
+                opponent_platform=sess.adp_platform,
+            )
+        except Exception as exc:
+            log.exception("Live sim error: %s", exc)
+
+    sess.sim_task = asyncio.create_task(_run())
+
+
 async def _poll_loop(sess: DraftSession):
     """Background task: poll Sleeper every 1s, push SSE on new picks."""
     log.info("Poll loop started for draft %s", sess.draft_id)
@@ -323,6 +396,9 @@ async def _poll_loop(sess: DraftSession):
             if pick_count != sess.last_pick_count:
                 sess.last_pick_count = pick_count
 
+                # Cancel any running simulation
+                await _cancel_sim(sess)
+
                 # Push state immediately WITHOUT recommendations
                 config = config_from_sleeper_meta(sess.meta)
                 state = rebuild_draft_state(
@@ -352,6 +428,12 @@ async def _poll_loop(sess: DraftSession):
                     sess.state_payload = payload
                     _push_to_subscribers(sess, payload)
                     log.info("Pushed recommendations for pick %d", pick_count)
+
+                # Start sim if user picks within 3 picks or it's their turn
+                picks_until = state.picks_until_next(sess.user_slot) if not state.is_complete else 999
+                if not state.is_complete and picks_until <= 3:
+                    _start_sim(sess, state)
+                    log.info("Started live sim (picks_until=%d)", picks_until)
 
         except httpx.HTTPError as e:
             log.warning("Poll HTTP error: %s", e)
@@ -553,6 +635,17 @@ async def get_state(
     return JSONResponse(sess.state_payload)
 
 
+@app.get("/api/sim")
+async def get_sim(
+    session_id: str = Query(..., description="Session ID"),
+):
+    """Return latest simulation snapshot."""
+    sess = _get_session(session_id)
+    if sess.sim_snapshot:
+        return JSONResponse(sess.sim_snapshot)
+    return JSONResponse({"sims_completed": 0, "sims_target": 0, "strategies": {}})
+
+
 @app.get("/api/stream")
 async def stream(
     request: Request,
@@ -574,7 +667,12 @@ async def stream(
                     break
                 try:
                     payload = await asyncio.wait_for(queue.get(), timeout=15)
-                    yield {"event": "draft_update", "data": json.dumps(payload)}
+                    # Check if this is a sim_update event (tagged by _push_sim_to_subscribers)
+                    if isinstance(payload, dict) and payload.get("__event__") == "sim_update":
+                        sim_data = {k: v for k, v in payload.items() if k != "__event__"}
+                        yield {"event": "sim_update", "data": json.dumps(sim_data)}
+                    else:
+                        yield {"event": "draft_update", "data": json.dumps(payload)}
                 except asyncio.TimeoutError:
                     # Send keepalive
                     yield {"event": "ping", "data": ""}
