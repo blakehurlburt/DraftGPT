@@ -125,7 +125,7 @@ _DATA_SOURCES = [
     },
     {
         "name": "Lahman Baseball DB",
-        "file": DATA_DIR / "lahman_1871-2025_csv" / "People.csv",
+        "file": DATA_DIR / "lahman_1871-2025_csv",
         "url": "https://sabr.app.box.com/s/y1prhc795jk8zvmelfd3jq7tl389y6cd",
         "how": "Manual download + unzip",
     },
