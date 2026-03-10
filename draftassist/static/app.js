@@ -465,7 +465,7 @@
         const hasMore = filtered.length > displayCount;
         filtered = filtered.slice(0, displayCount);
 
-        const colSpan = simData ? "10" : "9";
+        const colSpan = simData ? "11" : "10";
 
         if (!filtered.length) {
             const msg = !allRecs.length
@@ -492,6 +492,7 @@
                 <td><strong>${r.name}</strong></td>
                 <td><span class="pos-badge pos-${r.position}">${r.position}</span></td>
                 <td>${r.team}</td>
+                <td>${r.bye_week || "—"}</td>
                 <td>${r.projected_total}</td>
                 <td class="range-floor">${r.total_floor || "—"}</td>
                 <td class="range-ceil">${r.total_ceiling || "—"}</td>
@@ -525,7 +526,7 @@
 
         if (!roster.length) {
             rosterBody.innerHTML =
-                '<tr><td colspan="4" class="empty-msg">No picks yet</td></tr>';
+                '<tr><td colspan="5" class="empty-msg">No picks yet</td></tr>';
             return;
         }
 
@@ -536,6 +537,7 @@
                 <td><strong>${p.name}</strong></td>
                 <td><span class="pos-badge pos-${p.position}">${p.position}</span></td>
                 <td>${p.team}</td>
+                <td>${p.bye_week || "—"}</td>
                 <td>${p.projected_total}</td>
             </tr>`
             )

@@ -157,6 +157,21 @@ def generate_platform_adp(
     return load_adp_for_platform(players, platform)
 
 
+def load_bye_weeks(csv_path: Path | None = None) -> dict[str, int]:
+    """Return {team_abbr: bye_week} from ADP CSV."""
+    csv_rows = _load_csv(csv_path)
+    team_bye: dict[str, int] = {}
+    for row in csv_rows:
+        team = row.get("Team", "").strip()
+        bye = row.get("Bye", "").strip()
+        if team and bye and team not in team_bye:
+            try:
+                team_bye[team] = int(bye)
+            except ValueError:
+                continue
+    return team_bye
+
+
 def load_adp(
     platform: str = "consensus",
     adp_dir: str | Path = "data/adp",

@@ -20,6 +20,7 @@ class Player:
     pos_rank: int
     total_floor: float = 0.0   # 10th percentile season total
     total_ceiling: float = 0.0  # 90th percentile season total
+    bye_week: int = 0
     sleeper_id: str = ""
 
     @property
@@ -73,4 +74,14 @@ def load_players(
             )
 
     players.sort(key=lambda p: p.projected_total, reverse=True)
+
+    # Assign bye weeks from ADP CSV
+    from .adp import load_bye_weeks
+    try:
+        bye_weeks = load_bye_weeks()
+        for p in players:
+            p.bye_week = bye_weeks.get(p.team, 0)
+    except FileNotFoundError:
+        pass  # ADP file missing — leave bye_week as 0
+
     return players

@@ -212,6 +212,7 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
                         "total_ceiling": round(r.player.total_ceiling, 1),
                         "vbd": round(r.vbd_value, 1),
                         "strategy_score": round(r.strategy_score, 1),
+                        "bye_week": r.player.bye_week,
                         "adp": adp_rank.get(r.player.name, 999),
                     }
                     for r in rec_list
@@ -250,6 +251,7 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
             "position": p.position,
             "team": p.team,
             "projected_total": round(p.projected_total, 1),
+            "bye_week": p.bye_week,
             "vbd": round(vbd(p, replacement), 1),
         })
 
@@ -614,6 +616,7 @@ async def get_more_recommendations(
                     "total_ceiling": round(r.player.total_ceiling, 1),
                     "vbd": round(r.vbd_value, 1),
                     "strategy_score": round(r.strategy_score, 1),
+                    "bye_week": r.player.bye_week,
                     "adp": adp_rank.get(r.player.name, 999),
                 }
                 for r in rec_list[offset:]
