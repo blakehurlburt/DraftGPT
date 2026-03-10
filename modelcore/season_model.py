@@ -15,12 +15,14 @@ from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 
-def train_xgb(X_train, y_train, X_val, y_val, label="", quantile=None):
+def train_xgb(X_train, y_train, X_val, y_val, label="", quantile=None,
+              model_params=None):
     """Train a single XGBRegressor with early stopping.
 
     Args:
         quantile: If set (0-1), trains a quantile regression model instead
                   of mean regression. E.g., 0.1 for floor, 0.9 for ceiling.
+        model_params: Optional dict of XGBoost hyperparameters to override defaults.
     """
     kwargs = dict(
         n_estimators=500,
@@ -35,6 +37,8 @@ def train_xgb(X_train, y_train, X_val, y_val, label="", quantile=None):
         early_stopping_rounds=50,
         verbosity=0,
     )
+    if model_params:
+        kwargs.update(model_params)
     if quantile is not None:
         kwargs["objective"] = "reg:quantileerror"
         kwargs["quantile_alpha"] = quantile
@@ -55,7 +59,8 @@ def eval_metrics(y_true, y_pred):
     return {"mae": mae, "rmse": rmse, "r2": r2}
 
 
-def walk_forward_eval(df, feature_cols_fn, max_games, min_train_seasons=2):
+def walk_forward_eval(df, feature_cols_fn, max_games, min_train_seasons=2,
+                      model_params=None):
     """Run walk-forward evaluation across multiple test seasons.
 
     For each test season X, trains on all seasons < X and evaluates on X.
@@ -65,6 +70,7 @@ def walk_forward_eval(df, feature_cols_fn, max_games, min_train_seasons=2):
         feature_cols_fn: Callable(df) -> list[str] returning feature column names.
         max_games: Upper bound for game count predictions (17 for NFL, 162 for MLB).
         min_train_seasons: Minimum number of training seasons required.
+        model_params: Optional dict of XGBoost hyperparameters to override defaults.
 
     Returns:
         Polars DataFrame with all predictions and actuals.
@@ -103,11 +109,13 @@ def walk_forward_eval(df, feature_cols_fn, max_games, min_train_seasons=2):
         y_test_games = test_df["target_games"].to_pandas()
 
         # Train PPG model
-        ppg_model = train_xgb(X_train, y_train_ppg, X_test, y_test_ppg, "PPG")
+        ppg_model = train_xgb(X_train, y_train_ppg, X_test, y_test_ppg, "PPG",
+                              model_params=model_params)
         pred_ppg = ppg_model.predict(X_test)
 
         # Train games model
-        games_model = train_xgb(X_train, y_train_games, X_test, y_test_games, "Games")
+        games_model = train_xgb(X_train, y_train_games, X_test, y_test_games, "Games",
+                                model_params=model_params)
         pred_games = np.clip(games_model.predict(X_test), 0, max_games)
 
         # Compute predicted total
@@ -311,13 +319,15 @@ def walk_forward_with_residuals(df, feature_cols_fn, max_games, min_train_season
     return results_df, residual_map
 
 
-def train_final_model(df, feature_cols_fn, quantiles=(0.1, 0.5, 0.9)):
+def train_final_model(df, feature_cols_fn, quantiles=(0.1, 0.5, 0.9),
+                      model_params=None):
     """Train on ALL available data for production predictions.
 
     Args:
         df: Polars DataFrame with feature columns and targets.
         feature_cols_fn: Callable(df) -> list[str] returning feature column names.
         quantiles: Tuple of quantiles for floor/ceiling models.
+        model_params: Optional dict of XGBoost hyperparameters to override defaults.
 
     Returns:
         Tuple of (ppg_model, games_model, feature_importance_df, quantile_models).
@@ -341,6 +351,8 @@ def train_final_model(df, feature_cols_fn, quantiles=(0.1, 0.5, 0.9)):
         random_state=42,
         verbosity=0,
     )
+    if model_params:
+        _final_params.update(model_params)
 
     ppg_model = XGBRegressor(**_final_params)
     ppg_model.fit(X, y_ppg)

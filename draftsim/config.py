@@ -12,13 +12,13 @@ class LeagueConfig:
     num_teams: int = 12
     roster_size: int = 15
     lineup: dict = field(
-        default_factory=lambda: {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "FLEX": 1}
+        default_factory=lambda: {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "FLEX": 1, "K": 1, "DST": 1}
     )
     scoring: str = "ppr"
 
     # Position caps to prevent absurd rosters
     position_caps: dict = field(
-        default_factory=lambda: {"QB": 3, "RB": 6, "WR": 6, "TE": 3}
+        default_factory=lambda: {"QB": 3, "RB": 6, "WR": 6, "TE": 3, "K": 2, "DST": 2}
     )
 
     @property

@@ -56,7 +56,7 @@ def load_players(
             if total < min_total:
                 continue
             position = row["position_group"]
-            if position not in ("QB", "RB", "WR", "TE"):
+            if position not in ("QB", "RB", "WR", "TE", "K", "DST"):
                 continue
             players.append(
                 Player(

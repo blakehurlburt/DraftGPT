@@ -37,13 +37,31 @@ def build_player_index(
 
     id_to_player: dict[str, Player] = {}
 
+    # Build DST lookup by team abbreviation
+    dst_lookup: dict[str, Player] = {}
+    for p in our_players:
+        if p.position == "DST":
+            # player_id is "DST_KC" -> team abbr is "KC"
+            team_abbr = p.name.replace(" DST", "")
+            dst_lookup[team_abbr] = p
+
     for sid, info in sleeper_players.items():
         if not isinstance(info, dict):
             continue
         first = info.get("first_name", "") or ""
         last = info.get("last_name", "") or ""
         pos = info.get("position", "") or ""
-        if not first or not last or pos not in ("QB", "RB", "WR", "TE"):
+
+        # Match DST: Sleeper uses position "DEF" and team abbreviation
+        if pos == "DEF":
+            team = info.get("team", "") or ""
+            if team in dst_lookup:
+                player = dst_lookup[team]
+                player.sleeper_id = sid
+                id_to_player[sid] = player
+            continue
+
+        if not first or not last or pos not in ("QB", "RB", "WR", "TE", "K"):
             continue
 
         norm = _normalize(f"{first} {last}")
@@ -65,10 +83,12 @@ _SLOT_MAP = {
     "FLEX": "FLEX",
     "SUPER_FLEX": "SUPER_FLEX",
     "REC_FLEX": "FLEX",
+    "K": "K",
+    "DEF": "DST",
 }
 
-# Slots we ignore (kicker, defense, IDP, bench)
-_IGNORED_SLOTS = {"BN", "K", "DEF", "DL", "LB", "DB", "IDP_FLEX"}
+# Slots we ignore (IDP, bench)
+_IGNORED_SLOTS = {"BN", "DL", "LB", "DB", "IDP_FLEX"}
 
 
 def config_from_sleeper_meta(meta: dict) -> LeagueConfig:
@@ -118,8 +138,10 @@ def _make_placeholder(pick: dict) -> Player:
     pos = meta.get("position", "RB")  # Default to RB so it doesn't break caps
     team = meta.get("team", "")
 
-    # Map non-standard positions to something DraftState can handle
-    if pos not in ("QB", "RB", "WR", "TE"):
+    # Map Sleeper positions to our positions
+    if pos == "DEF":
+        pos = "DST"
+    elif pos not in ("QB", "RB", "WR", "TE", "K", "DST"):
         pos = "RB"  # Placeholder position for draft state advancement
 
     return Player(

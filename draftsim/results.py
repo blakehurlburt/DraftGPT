@@ -18,7 +18,7 @@ def compute_optimal_lineup(roster: list[Player], config: LeagueConfig) -> tuple[
     flex_count = config.num_flex()
 
     # Group roster by position
-    by_pos: dict[str, list[Player]] = {"QB": [], "RB": [], "WR": [], "TE": []}
+    by_pos: dict[str, list[Player]] = {"QB": [], "RB": [], "WR": [], "TE": [], "K": [], "DST": []}
     for p in roster:
         if p.position in by_pos:
             by_pos[p.position].append(p)
@@ -145,7 +145,8 @@ def format_draft_recap(roster: list[Player], config: LeagueConfig) -> str:
     lines.append("Starters:")
     starters = config.starter_slots()
     pos_counts: dict = {}
-    for p in sorted(lineup, key=lambda p: ("QB", "RB", "WR", "TE").index(p.position)):
+    _POS_ORDER = {"QB": 0, "RB": 1, "WR": 2, "TE": 3, "K": 4, "DST": 5}
+    for p in sorted(lineup, key=lambda p: _POS_ORDER.get(p.position, 6)):
         pos_counts[p.position] = pos_counts.get(p.position, 0) + 1
         starter_slots = starters.get(p.position, 0)
         label = "FLEX" if pos_counts[p.position] > starter_slots else p.position
@@ -166,19 +167,20 @@ def format_position_composition(results: dict, rosters: dict) -> str:
     lines = []
     lines.append("\nAVERAGE ROSTER COMPOSITION BY STRATEGY")
     lines.append("-" * 50)
-    lines.append(f"{'Strategy':<12} {'QB':>5} {'RB':>5} {'WR':>5} {'TE':>5}")
-    lines.append("-" * 50)
+    all_pos = ["QB", "RB", "WR", "TE", "K", "DST"]
+    lines.append(f"{'Strategy':<12} {'QB':>5} {'RB':>5} {'WR':>5} {'TE':>5} {'K':>5} {'DST':>5}")
+    lines.append("-" * 62)
 
     strategies = sorted(set(s for _, s in results.keys()))
 
     for strat in strategies:
-        pos_counts = {"QB": [], "RB": [], "WR": [], "TE": []}
+        pos_counts = {pos: [] for pos in all_pos}
         for (slot, s), _ in results.items():
             if s != strat:
                 continue
             for key, roster in rosters.items():
                 if key[1] == strat:
-                    counts = {"QB": 0, "RB": 0, "WR": 0, "TE": 0}
+                    counts = {pos: 0 for pos in all_pos}
                     for p in roster:
                         if p.position in counts:
                             counts[p.position] += 1
@@ -190,7 +192,9 @@ def format_position_composition(results: dict, rosters: dict) -> str:
                 f"{strat:<12} {np.mean(pos_counts['QB']):>5.1f} "
                 f"{np.mean(pos_counts['RB']):>5.1f} "
                 f"{np.mean(pos_counts['WR']):>5.1f} "
-                f"{np.mean(pos_counts['TE']):>5.1f}"
+                f"{np.mean(pos_counts['TE']):>5.1f} "
+                f"{np.mean(pos_counts['K']):>5.1f} "
+                f"{np.mean(pos_counts['DST']):>5.1f}"
             )
 
     return "\n".join(lines)

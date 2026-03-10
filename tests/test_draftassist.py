@@ -238,8 +238,8 @@ class TestMakePlaceholder:
         p = _make_placeholder(pick)
         assert p.name == "Tyler Bass"
         assert p.projected_total == 0.0
-        # K gets remapped to RB for draft state compatibility
-        assert p.position in ("QB", "RB", "WR", "TE")
+        # K is now a supported position
+        assert p.position == "K"
 
 
 # ---------------------------------------------------------------------------

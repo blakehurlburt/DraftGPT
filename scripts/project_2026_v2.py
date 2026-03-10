@@ -11,6 +11,18 @@ import numpy as np
 from pathlib import Path
 from nfldata.season_features import build_season_features, get_season_feature_columns
 from nfldata.season_model import train_final_model, project_season
+from nfldata.kicker_features import build_kicker_features, build_kicker_projection_features
+from nfldata.kicker_model import (
+    train_final_model as train_kicker_model,
+    project_season as project_kicker_season,
+    walk_forward_eval as kicker_walk_forward_eval,
+)
+from nfldata.dst_features import build_dst_features, build_dst_projection_features
+from nfldata.dst_model import (
+    train_final_model as train_dst_model,
+    project_season as project_dst_season,
+    walk_forward_eval as dst_walk_forward_eval,
+)
 
 ROSTER_PATH = Path(__file__).parent.parent / "data" / "rosters.csv"
 OUTPUT_DIR = Path(__file__).parent.parent / "data" / "projections"
@@ -96,8 +108,30 @@ def main():
         | pl.col("current_status").is_null()
     )
 
+    # --- Kicker Projections ---
+    print("\n--- Kicker Model ---")
+    k_df = build_kicker_features(range(2009, 2026))
+    kicker_walk_forward_eval(k_df)
+    k_ppg, k_games, k_imp, k_qmodels = train_kicker_model(k_df)
+    k_proj_df = build_kicker_projection_features(range(2009, 2026), rosters=rosters)
+    k_results = project_kicker_season(k_ppg, k_games, k_proj_df, quantile_models=k_qmodels)
+
+    # --- DST Projections ---
+    print("\n--- DST Model ---")
+    dst_df = build_dst_features(range(2009, 2026))
+    dst_walk_forward_eval(dst_df)
+    dst_ppg, dst_games, dst_imp, dst_qmodels = train_dst_model(dst_df)
+    dst_proj_df = build_dst_projection_features(range(2009, 2026))
+    dst_results = project_dst_season(dst_ppg, dst_games, dst_proj_df, quantile_models=dst_qmodels)
+
+    # Set current_team for DST from the team column
+    if "team" in dst_results.columns:
+        dst_results = dst_results.with_columns(
+            pl.col("team").alias("current_team")
+        )
+
     # Step 7: Write CSVs and print rankings
-    _write_projection_csvs(results)
+    _write_projection_csvs(results, k_results, dst_results)
 
     has_quantiles = "ppg_floor" in results.columns
 
@@ -131,6 +165,30 @@ def main():
             else:
                 print(f"{i:<6}{name:<26}{team:<6}{ppg:>7.1f}{games:>7.1f}{total:>7}")
 
+    # K rankings
+    k_top = k_results.sort("projected_total", descending=True).head(15)
+    print(f"\n{'='*70}")
+    print(f"  K RANKINGS — 2026 Season-Level Projections")
+    print(f"{'='*70}")
+    print(f"{'Rank':<6}{'Player':<26}{'Team':<6}{'PPG':>7}{'Games':>7}{'Total':>7}")
+    print(f"{'-'*6}{'-'*26}{'-'*6}{'-'*7}{'-'*7}{'-'*7}")
+    for i, row in enumerate(k_top.iter_rows(named=True), 1):
+        name = (row.get("player_display_name") or "???")[:24]
+        team = (row.get("current_team") or row.get("team") or "???")[:5]
+        print(f"{i:<6}{name:<26}{team:<6}{row['projected_ppg']:>7.1f}{row['projected_games']:>7.1f}{row['projected_total']:>7}")
+
+    # DST rankings
+    dst_top = dst_results.sort("projected_total", descending=True).head(16)
+    print(f"\n{'='*70}")
+    print(f"  DST RANKINGS — 2026 Season-Level Projections")
+    print(f"{'='*70}")
+    print(f"{'Rank':<6}{'Team DST':<26}{'Team':<6}{'PPG':>7}{'Games':>7}{'Total':>7}")
+    print(f"{'-'*6}{'-'*26}{'-'*6}{'-'*7}{'-'*7}{'-'*7}")
+    for i, row in enumerate(dst_top.iter_rows(named=True), 1):
+        name = (row.get("player_display_name") or "???")[:24]
+        team = (row.get("current_team") or row.get("team") or "???")[:5]
+        print(f"{i:<6}{name:<26}{team:<6}{row['projected_ppg']:>7.1f}{row['projected_games']:>7.1f}{row['projected_total']:>7}")
+
     # Overall draft board
     overall = results.sort("projected_total", descending=True).head(60)
     print(f"\n{'='*100}")
@@ -158,7 +216,7 @@ def main():
             print(f"{i:<5}{pos:<7}{name:<26}{team:<6}{ppg:>7.1f}{games:>7.1f}{total:>7}")
 
 
-def _write_projection_csvs(results):
+def _write_projection_csvs(results, k_results=None, dst_results=None):
     """Write per-position and overall projection CSVs to projections/ dir."""
     OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -169,7 +227,7 @@ def _write_projection_csvs(results):
                 "pos_rank"]
     available = [c for c in csv_cols if c in results.columns]
 
-    # Per-position files
+    # Per-position files for offensive players
     for pos in ["QB", "RB", "WR", "TE"]:
         pos_df = (
             results.filter(pl.col("position_group") == pos)
@@ -180,8 +238,30 @@ def _write_projection_csvs(results):
         pos_df.write_csv(path)
         print(f"  Wrote {pos_df.shape[0]} {pos}s to {path}")
 
-    # Overall file (all positions combined)
-    all_df = results.sort("projected_total", descending=True).select(available)
+    # K/DST files
+    for label, extra in [("k", k_results), ("dst", dst_results)]:
+        if extra is None:
+            continue
+        # Ensure current_team exists
+        if "current_team" not in extra.columns and "team" in extra.columns:
+            extra = extra.with_columns(pl.col("team").alias("current_team"))
+        extra_avail = [c for c in csv_cols if c in extra.columns]
+        extra_df = extra.sort("projected_total", descending=True).select(extra_avail)
+        path = OUTPUT_DIR / f"{label}_projections.csv"
+        extra_df.write_csv(path)
+        print(f"  Wrote {extra_df.shape[0]} {label.upper()}s to {path}")
+
+    # Overall file (all positions combined, including K/DST)
+    all_parts = [results.sort("projected_total", descending=True).select(available)]
+    for extra in [k_results, dst_results]:
+        if extra is None:
+            continue
+        if "current_team" not in extra.columns and "team" in extra.columns:
+            extra = extra.with_columns(pl.col("team").alias("current_team"))
+        extra_avail = [c for c in available if c in extra.columns]
+        all_parts.append(extra.sort("projected_total", descending=True).select(extra_avail))
+
+    all_df = pl.concat(all_parts, how="diagonal").sort("projected_total", descending=True)
     path = OUTPUT_DIR / "all_projections.csv"
     all_df.write_csv(path)
     print(f"  Wrote {all_df.shape[0]} total players to {path}")
