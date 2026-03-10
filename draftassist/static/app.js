@@ -141,6 +141,11 @@
             render: (r) => r.strategy_score ?? "—",
         },
         {
+            key: "vona", label: "VONA",
+            title: "Position urgency — how much this position drops before your next pick",
+            render: (r) => r.vona != null && r.vona > 0 ? r.vona.toFixed(1) : "—",
+        },
+        {
             key: "adp", label: "ADP", sortKey: "adp",
             title: "Average Draft Position (click to sort)",
             cls: "sortable",
@@ -223,7 +228,7 @@
 
     const SCORE_TOOLTIPS = {
         "vbd": "Value over positional replacement level",
-        "vona": "Combined VBD + positional drop-off urgency",
+        "vona": "Composite: VBD × roster fit + VONA urgency + risk adjustment",
         "bpa": "Total projected season points",
         "zero-rb": "Value over positional replacement level",
         "robust-rb": "Value over positional replacement level",

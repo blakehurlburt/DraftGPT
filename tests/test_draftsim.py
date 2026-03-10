@@ -10,7 +10,10 @@ from draftsim.strategies import (
     pick_bpa, pick_vbd, pick_vona, pick_zero_rb, pick_robust_rb,
     get_strategy, STRATEGIES, _eligible, _force_need_pick,
 )
-from draftsim.value import compute_replacement_levels, vbd, vona
+from draftsim.value import (
+    compute_replacement_levels, vbd, vona,
+    _pick_probability, _need_adjusted_adp,
+)
 from draftsim.adp import (
     generate_platform_adp, generate_consensus_adp, load_adp,
     PLATFORMS,
@@ -250,6 +253,47 @@ class TestValue:
         adp_order = [p.name for p in state.available]
         result = vona(state, 0, "QB", adp_order)
         assert result == 0.0
+
+    def test_vona_with_round_params(self, sample_players, small_config):
+        """VONA accepts current_round/total_rounds and returns valid result."""
+        state = DraftState.create(small_config, sample_players)
+        adp_order = [p.name for p in sample_players]
+        result = vona(state, 0, "RB", adp_order, current_round=3, total_rounds=7)
+        assert isinstance(result, (int, float))
+        assert result >= 0.0
+
+    def test_vona_probabilistic_smoother(self, sample_players, small_config):
+        """Probabilistic VONA should give non-negative, finite values."""
+        state = DraftState.create(small_config, sample_players)
+        adp_order = [p.name for p in sample_players]
+        for pos in ["QB", "RB", "WR", "TE"]:
+            result = vona(state, 0, pos, adp_order,
+                          current_round=1, total_rounds=7)
+            assert result >= 0.0
+            assert result < 1000  # sanity bound
+
+    def test_pick_probability_bounds(self):
+        """_pick_probability returns values in [0, 1]."""
+        for adp in range(1, 20):
+            for gap in range(1, 15):
+                p = _pick_probability(adp, gap, 1, 15)
+                assert 0.0 <= p <= 1.0
+                p_late = _pick_probability(adp, gap, 14, 15)
+                assert 0.0 <= p_late <= 1.0
+
+    def test_pick_probability_decreases_with_adp(self):
+        """Higher ADP position (further from pick) = lower probability of being taken."""
+        p_close = _pick_probability(2, 10, 1, 15)
+        p_far = _pick_probability(15, 10, 1, 15)
+        assert p_close > p_far
+
+    def test_need_adjusted_adp_length(self, sample_players, small_config):
+        """Need-adjusted ADP preserves all names."""
+        state = DraftState.create(small_config, sample_players)
+        adp_order = [p.name for p in sample_players]
+        adjusted = _need_adjusted_adp(state, 0, adp_order)
+        assert len(adjusted) == len(adp_order)
+        assert set(adjusted) == set(adp_order)
 
 
 # ---------------------------------------------------------------------------

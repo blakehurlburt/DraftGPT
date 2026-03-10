@@ -113,7 +113,12 @@ def pick_vona(
 
     # Cache VONA per position once
     positions = {p.position for p in eligible}
-    pos_vona_cache = {pos: vona(state, team_idx, pos, adp_order) for pos in positions}
+    pos_vona_cache = {
+        pos: vona(state, team_idx, pos, adp_order,
+                  current_round=state.current_round,
+                  total_rounds=state.config.num_rounds)
+        for pos in positions
+    }
 
     def _score(p):
         discount = marginal_value_discount(p, roster, state.config)

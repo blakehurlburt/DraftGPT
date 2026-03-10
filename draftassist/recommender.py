@@ -23,6 +23,7 @@ class Recommendation:
     rank: int
     vbd_value: float
     strategy_score: float  # the score the strategy actually used to rank this pick
+    vona_value: float = 0.0  # positional urgency: how much this position drops
 
 
 def _compute_strategy_score(
@@ -47,7 +48,9 @@ def _compute_strategy_score(
         if pos_vona_cache is not None:
             pos_v = pos_vona_cache.get(player.position, 0.0)
         elif adp_order:
-            pos_v = vona(state, team_idx, player.position, adp_order)
+            pos_v = vona(state, team_idx, player.position, adp_order,
+                         current_round=state.current_round,
+                         total_rounds=state.config.num_rounds)
         else:
             pos_v = 0.0
         return player_vbd * discount + pos_v * weight + var
@@ -79,11 +82,16 @@ def top_n_picks(
         state.available, state.config, state.teams,
     )
 
-    # Pre-compute VONA cache for vona strategy
-    pos_vona_cache: dict[str, float] | None = None
-    if strategy_name == "vona" and adp_order:
+    # Pre-compute VONA cache (always, so we can populate vona_value on every rec)
+    pos_vona_cache: dict[str, float] = {}
+    if adp_order:
         positions = {p.position for p in state.available}
-        pos_vona_cache = {pos: vona(state, team_idx, pos, adp_order) for pos in positions}
+        pos_vona_cache = {
+            pos: vona(state, team_idx, pos, adp_order,
+                      current_round=state.current_round,
+                      total_rounds=state.config.num_rounds)
+            for pos in positions
+        }
 
     # Include adp_order and risk_profile in kwargs for strategies
     strategy_kwargs = dict(kwargs)
@@ -114,6 +122,7 @@ def top_n_picks(
             rank=i + 1,
             vbd_value=vbd(player, replacement),
             strategy_score=score,
+            vona_value=pos_vona_cache.get(player.position, 0.0),
         ))
 
         # Temporarily remove from available for next iteration

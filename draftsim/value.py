@@ -137,23 +137,103 @@ def vbd(player: Player, replacement_levels: dict[str, float]) -> float:
     return player.projected_total - replacement_levels.get(player.position, 0.0)
 
 
+def _pick_probability(
+    adp_position: int,
+    gap_size: int,
+    current_round: int,
+    total_rounds: int,
+) -> float:
+    """Probability that a player at *adp_position* is taken within *gap_size* picks.
+
+    Uses a sigmoid centred on the gap boundary.  Uncertainty (spread) widens
+    as the draft progresses because late-round ADP is noisier.
+
+    Args:
+        adp_position: 1-indexed position in the ADP-ordered available list
+        gap_size: number of picks before our next turn
+        current_round: 1-indexed current round
+        total_rounds: total rounds in the draft
+    """
+    round_frac = (current_round - 1) / max(total_rounds - 1, 1)
+    spread = 3.0 + 9.0 * round_frac          # 3 early → 12 late
+    midpoint = gap_size - 1                   # picks that happen in the gap
+    if midpoint <= 0:
+        return 0.0
+    x = (adp_position - midpoint) / max(spread, 0.1)
+    return 1.0 / (1.0 + math.exp(x))         # high when adp_position < midpoint
+
+
+def _need_adjusted_adp(
+    state: DraftState,
+    team_idx: int,
+    adp_order: list[str],
+) -> list[str]:
+    """Re-order *adp_order* by boosting players who match other teams' needs.
+
+    For each team picking in the gap before *team_idx*'s next turn, check
+    ``team_needs()`` and pull matching-position players earlier.
+    """
+    gap = state.picks_until_next(team_idx)
+    if gap <= 1:
+        return adp_order
+
+    # Collect position demand from teams picking in the gap
+    pos_demand: dict[str, float] = {}
+    for i in range(state.current_pick + 1,
+                   min(state.current_pick + gap, len(state.pick_order))):
+        other = state.pick_order[i]
+        if other == team_idx:
+            break
+        needs = state.team_needs(other)
+        for pos, count in needs.items():
+            if pos == "FLEX":
+                continue
+            pos_demand[pos] = pos_demand.get(pos, 0) + count
+
+    if not pos_demand:
+        return adp_order
+
+    # Build a player-name → position lookup from available
+    name_to_pos: dict[str, str] = {p.name: p.position for p in state.available}
+
+    # Score each name: lower = earlier.  Original index is base;
+    # subtract a bonus for positions in demand.
+    max_demand = max(pos_demand.values()) if pos_demand else 1
+    scored: list[tuple[float, str]] = []
+    for idx, name in enumerate(adp_order):
+        pos = name_to_pos.get(name, "")
+        demand = pos_demand.get(pos, 0)
+        # Boost proportional to demand: up to 30% of original index
+        boost = (demand / max_demand) * 0.30 * (idx + 1) if demand else 0
+        scored.append((idx - boost, name))
+
+    scored.sort(key=lambda t: t[0])
+    return [name for _, name in scored]
+
+
 def vona(
     state: DraftState,
     team_idx: int,
     position: str,
     adp_order: list[str],
     top_k: int = 3,
+    current_round: int | None = None,
+    total_rounds: int | None = None,
 ) -> float:
     """Value Over Next Available — estimated drop-off at a position.
 
     Computes the difference between the best available player at a position NOW
-    vs. the best likely available at your NEXT pick, based on ADP-predicted removals.
+    vs. the best likely available at your NEXT pick, using probability-weighted
+    removal and need-aware ADP adjustment.
 
     Args:
         state: Current draft state
         team_idx: Team computing VONA for
         position: Position to evaluate
         adp_order: Player names in ADP order (for estimating who gets taken)
+        top_k: Number of top players to average for stability
+        current_round: 1-indexed current round (defaults to state.current_round)
+        total_rounds: Total rounds in draft (defaults to state.config.num_rounds)
 
     Returns:
         VONA value: higher means more urgent to draft this position now
@@ -162,36 +242,62 @@ def vona(
     if not available_at_pos:
         return 0.0
 
-    # Estimate who will be taken before our next pick
     gap = state.picks_until_next(team_idx)
     if gap <= 1:
-        return 0.0  # Picking next, no urgency
+        return 0.0
 
-    # Top-K averaging for a more stable signal (K=3)
+    if current_round is None:
+        current_round = state.current_round
+    if total_rounds is None:
+        total_rounds = state.config.num_rounds
+
+    # Top-K averaging for a more stable signal
     k = min(top_k, len(available_at_pos))
     avg_now = _mean([p.projected_total for p in available_at_pos[:k]])
 
-    # Use ADP to predict which available players get taken
+    # Need-aware ADP adjustment
+    adjusted_adp = _need_adjusted_adp(state, team_idx, adp_order)
+
+    # Build ADP position lookup for available players (1-indexed)
     available_names = {p.name for p in state.available}
-    top_k_names = {p.name for p in available_at_pos[:k]}
-    predicted_taken = set()
-    taken_count = 0
-    for name in adp_order:
-        if taken_count >= gap - 1:  # gap-1 picks happen between now and our next
+    adp_pos_map: dict[str, int] = {}
+    adp_idx = 0
+    for name in adjusted_adp:
+        if name in available_names:
+            adp_idx += 1
+            adp_pos_map[name] = adp_idx
+
+    # Probability-weighted expected value after the gap
+    # Each player at this position has a probability of being taken
+    remaining_values: list[tuple[float, float]] = []  # (projected, survival_prob)
+    for p in available_at_pos:
+        adp_position = adp_pos_map.get(p.name, len(available_names))
+        prob_taken = _pick_probability(adp_position, gap, current_round, total_rounds)
+        survival = 1.0 - prob_taken
+        remaining_values.append((p.projected_total, survival))
+
+    # Expected top-K value after removals using survival probabilities
+    # Weight each player's contribution by their survival probability
+    total_survival = sum(s for _, s in remaining_values)
+    if total_survival < 0.01:
+        return avg_now  # all likely taken — very high urgency
+
+    # Compute expected average of top-K survivors
+    # Sort by projected descending (already sorted), take weighted top-K
+    weighted_sum = 0.0
+    weight_sum = 0.0
+    for val, surv in remaining_values:
+        if weight_sum >= k:
             break
-        if name in available_names and name not in top_k_names:
-            predicted_taken.add(name)
-            taken_count += 1
+        contrib = min(surv, k - weight_sum)
+        weighted_sum += val * contrib
+        weight_sum += contrib
 
-    # Top-K at this position after predicted removals
-    remaining = [p for p in available_at_pos if p.name not in predicted_taken]
-    if not remaining:
-        # All players at this position predicted to be taken — very high urgency
+    if weight_sum < 0.01:
         return avg_now
-    k_later = min(k, len(remaining))
-    avg_later = _mean([p.projected_total for p in remaining[:k_later]])
 
-    return avg_now - avg_later
+    avg_later = weighted_sum / weight_sum
+    return max(0.0, avg_now - avg_later)
 
 
 # Risk profile names → multiplier on the variance bonus.
