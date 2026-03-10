@@ -137,6 +137,82 @@ def vbd(player: Player, replacement_levels: dict[str, float]) -> float:
     return player.projected_total - replacement_levels.get(player.position, 0.0)
 
 
+# VORP is the standard name for this metric in the fantasy community
+vorp = vbd
+
+
+def compute_last_starter_levels(
+    available: list[Player],
+    config: LeagueConfig,
+    teams: list[list[Player]],
+) -> dict[str, float]:
+    """Projected points of the worst player who will end up as a starter.
+
+    Unlike replacement levels (first waiver-wire player = N+1th), this returns
+    the Nth player — the last starter slot being filled.  FLEX slots are NOT
+    counted; only mandatory starter positions.
+    """
+    starters = config.starter_slots()
+    all_positions = ["QB", "RB", "WR", "TE", "K", "DST"]
+
+    # Count already-filled starter slots across all teams
+    remaining_need: dict[str, int] = {pos: 0 for pos in all_positions}
+    for roster in teams:
+        roster_counts: dict[str, int] = {}
+        for p in roster:
+            roster_counts[p.position] = roster_counts.get(p.position, 0) + 1
+        for pos in all_positions:
+            have = roster_counts.get(pos, 0)
+            required = starters.get(pos, 0)
+            remaining_need[pos] += max(0, required - have)
+
+    # Group available players by position, sorted descending
+    by_pos: dict[str, list[Player]] = {pos: [] for pos in all_positions}
+    for p in available:
+        if p.position in by_pos:
+            by_pos[p.position].append(p)
+    for pos in by_pos:
+        by_pos[pos].sort(key=lambda p: p.projected_total, reverse=True)
+
+    last_starter: dict[str, float] = {}
+    for pos in all_positions:
+        count = remaining_need.get(pos, 0)
+        pos_players = by_pos.get(pos, [])
+        if count <= 0 or not pos_players:
+            # All starter slots filled or no players — use 0
+            last_starter[pos] = 0.0
+        else:
+            # Last starter = the (count)th best available (0-indexed: count-1)
+            idx = min(count - 1, len(pos_players) - 1)
+            last_starter[pos] = pos_players[idx].projected_total
+
+    return last_starter
+
+
+def vols(player: Player, last_starter_levels: dict[str, float]) -> float:
+    """Value Over Last Starter — how much better than the worst opponent starter.
+
+    VOLS measures the difference between this player's projection and the
+    worst player at this position who will end up as a starter for an opponent.
+    Floored at 0 (a player below the last starter has no starter-tier value).
+    """
+    return max(0.0, player.projected_total - last_starter_levels.get(player.position, 0.0))
+
+
+def vbd_score(
+    vorp_val: float,
+    vona_val: float,
+    vols_val: float,
+) -> float:
+    """Composite VBD Score aggregating VORP, VONA, and VOLS.
+
+    Simple sum of the three components (each already floored at 0).
+    VORP provides the base value signal, VONA adds positional urgency,
+    and VOLS adds starter-tier scarcity context.
+    """
+    return max(0.0, vorp_val) + max(0.0, vona_val) + max(0.0, vols_val)
+
+
 def _pick_probability(
     adp_position: int,
     gap_size: int,

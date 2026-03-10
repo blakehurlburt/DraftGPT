@@ -9,9 +9,12 @@ from draftsim.players import Player
 from draftsim.strategies import STRATEGIES, _var_bonus
 from draftsim.value import (
     compute_dynamic_replacement_levels,
+    compute_last_starter_levels,
     compute_replacement_levels,
     marginal_value_discount,
     vbd,
+    vbd_score,
+    vols,
     vona,
     vona_weight,
 )
@@ -21,9 +24,11 @@ from draftsim.value import (
 class Recommendation:
     player: Player
     rank: int
-    vbd_value: float
+    vbd_value: float  # VORP: value over replacement player
     strategy_score: float  # the score the strategy actually used to rank this pick
-    vona_value: float = 0.0  # positional urgency: how much this position drops
+    vona_value: float = 0.0  # VONA: positional urgency
+    vols_value: float = 0.0  # VOLS: value over last starter
+    vbd_score_value: float = 0.0  # VBD Score: composite VORP + VONA + VOLS
 
 
 def _compute_strategy_score(
@@ -81,6 +86,9 @@ def top_n_picks(
     replacement = compute_dynamic_replacement_levels(
         state.available, state.config, state.teams,
     )
+    last_starter = compute_last_starter_levels(
+        state.available, state.config, state.teams,
+    )
 
     # Pre-compute VONA cache (always, so we can populate vona_value on every rec)
     pos_vona_cache: dict[str, float] = {}
@@ -117,12 +125,18 @@ def top_n_picks(
             risk_profile, pos_vona_cache,
         )
 
+        vorp_val = vbd(player, replacement)
+        vona_val = pos_vona_cache.get(player.position, 0.0)
+        vols_val = vols(player, last_starter)
+
         picks.append(Recommendation(
             player=player,
             rank=i + 1,
-            vbd_value=vbd(player, replacement),
+            vbd_value=vorp_val,
             strategy_score=score,
-            vona_value=pos_vona_cache.get(player.position, 0.0),
+            vona_value=vona_val,
+            vols_value=vols_val,
+            vbd_score_value=vbd_score(vorp_val, vona_val, vols_val),
         ))
 
         # Temporarily remove from available for next iteration

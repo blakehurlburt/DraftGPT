@@ -11,7 +11,8 @@ from draftsim.strategies import (
     get_strategy, STRATEGIES, _eligible, _force_need_pick,
 )
 from draftsim.value import (
-    compute_replacement_levels, vbd, vona,
+    compute_replacement_levels, compute_last_starter_levels,
+    vbd, vorp, vols, vbd_score, vona,
     _pick_probability, _need_adjusted_adp,
 )
 from draftsim.adp import (
@@ -294,6 +295,118 @@ class TestValue:
         adjusted = _need_adjusted_adp(state, 0, adp_order)
         assert len(adjusted) == len(adp_order)
         assert set(adjusted) == set(adp_order)
+
+    def test_vorp_is_vbd_alias(self):
+        """vorp is an alias for vbd."""
+        assert vorp is vbd
+
+    def test_last_starter_levels(self, sample_players, small_config):
+        """Last starter levels are at or above replacement levels."""
+        state = DraftState.create(small_config, sample_players)
+        repl = compute_replacement_levels(sample_players, small_config)
+        last = compute_last_starter_levels(
+            state.available, small_config, state.teams
+        )
+        # Last starter should be >= replacement level (higher baseline)
+        for pos in ["QB", "RB", "WR", "TE"]:
+            if pos in repl and pos in last:
+                assert last[pos] >= repl[pos], (
+                    f"{pos}: last starter {last[pos]} < replacement {repl[pos]}"
+                )
+
+    def test_last_starter_levels_adjust_after_drafting(self, sample_players, small_config):
+        """As starters get drafted, last starter levels respond."""
+        state = DraftState.create(small_config, sample_players)
+        # Draft two RBs for team 0 (fills starter slots, removes top RBs)
+        for _ in range(2):
+            rb = next(p for p in state.available if p.position == "RB")
+            state.make_pick(rb)
+        levels_after = compute_last_starter_levels(
+            state.available, small_config, state.teams
+        )
+        # Remaining RB need is reduced; last starter among available should
+        # be lower since top 2 RBs are gone from the pool
+        # (remaining_need went from 8 to 6, but pool lost 2 top players)
+        assert levels_after["RB"] > 0  # still some need
+
+    def test_vols_returns_non_negative(self, sample_players, small_config):
+        """VOLS is always >= 0 (floored)."""
+        state = DraftState.create(small_config, sample_players)
+        last = compute_last_starter_levels(
+            state.available, small_config, state.teams
+        )
+        for p in sample_players:
+            v = vols(p, last)
+            assert v >= 0.0, f"VOLS for {p.name} = {v}"
+
+    def test_vols_less_than_vorp(self, sample_players, small_config):
+        """VOLS <= VORP for all players (VOLS has a higher baseline)."""
+        state = DraftState.create(small_config, sample_players)
+        repl = compute_replacement_levels(sample_players, small_config)
+        last = compute_last_starter_levels(
+            state.available, small_config, state.teams
+        )
+        for p in sample_players:
+            v_vols = vols(p, last)
+            v_vorp = max(0.0, vbd(p, repl))
+            assert v_vols <= v_vorp + 0.01, (
+                f"{p.name}: VOLS {v_vols} > VORP {v_vorp}"
+            )
+
+    def test_vols_top_player_positive(self, sample_players, small_config):
+        """Top player at each position should have positive VOLS."""
+        state = DraftState.create(small_config, sample_players)
+        last = compute_last_starter_levels(
+            state.available, small_config, state.teams
+        )
+        for pos in ["QB", "RB", "WR", "TE"]:
+            top = next(p for p in sample_players if p.position == pos)
+            assert vols(top, last) > 0, f"Top {pos} should have VOLS > 0"
+
+    def test_vbd_score_composite(self):
+        """VBD score is the sum of VORP + VONA + VOLS."""
+        assert vbd_score(50.0, 10.0, 30.0) == 90.0
+
+    def test_vbd_score_floors_negatives(self):
+        """VBD score floors each component at 0."""
+        assert vbd_score(-10.0, 5.0, -3.0) == 5.0
+        assert vbd_score(0.0, 0.0, 0.0) == 0.0
+
+    def test_vbd_score_all_positive(self, sample_players, small_config):
+        """VBD score is always non-negative for any player."""
+        state = DraftState.create(small_config, sample_players)
+        repl = compute_replacement_levels(sample_players, small_config)
+        last = compute_last_starter_levels(
+            state.available, small_config, state.teams
+        )
+        adp_order = [p.name for p in sample_players]
+        for p in sample_players:
+            v = vbd_score(
+                vbd(p, repl),
+                vona(state, 0, p.position, adp_order),
+                vols(p, last),
+            )
+            assert v >= 0.0
+
+    def test_vbd_score_top_players_high(self, sample_players, small_config):
+        """Top players should have higher VBD scores than bottom players."""
+        state = DraftState.create(small_config, sample_players)
+        repl = compute_replacement_levels(sample_players, small_config)
+        last = compute_last_starter_levels(
+            state.available, small_config, state.teams
+        )
+        adp_order = [p.name for p in sample_players]
+
+        def _score(p):
+            return vbd_score(
+                vbd(p, repl),
+                vona(state, 0, p.position, adp_order),
+                vols(p, last),
+            )
+
+        top_qb = next(p for p in sample_players if p.position == "QB")
+        bottom_qb = [p for p in sample_players if p.position == "QB"][-1]
+        assert _score(top_qb) > _score(bottom_qb)
 
 
 # ---------------------------------------------------------------------------

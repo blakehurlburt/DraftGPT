@@ -50,6 +50,7 @@
     let currentView = "ticker";  // "ticker" or "board"
     let simData = null;  // latest sim snapshot
     let simCollapsed = false;
+    let rosterSort = null;  // null = draft order, or {key, asc}
 
     // Extra recommendations fetched via "show more"
     let extraRecs = {};       // strategy -> array of additional recs
@@ -136,14 +137,24 @@
             render: (r) => r.total_ceiling || "—",
         },
         {
-            key: "strategy_score", label: "VBD", id: "score-header",
-            title: "Strategy-specific score",
-            render: (r) => r.strategy_score ?? "—",
+            key: "vorp", label: "VORP",
+            title: "Value Over Replacement Player — points above the best waiver-wire player at this position",
+            render: (r) => r.vorp != null ? r.vorp.toFixed(1) : "—",
         },
         {
             key: "vona", label: "VONA",
-            title: "Position urgency — how much this position drops before your next pick",
+            title: "Value Over Next Available — how much this position drops before your next pick",
             render: (r) => r.vona != null && r.vona > 0 ? r.vona.toFixed(1) : "—",
+        },
+        {
+            key: "vols", label: "VOLS",
+            title: "Value Over Last Starter — points above the worst starter at this position across the league",
+            render: (r) => r.vols != null && r.vols > 0 ? r.vols.toFixed(1) : "—",
+        },
+        {
+            key: "vbd_score", label: "VBD", id: "score-header",
+            title: "Composite VBD Score — aggregates VORP + VONA + VOLS into one comparison number",
+            render: (r) => r.vbd_score != null ? r.vbd_score.toFixed(1) : "—",
         },
         {
             key: "adp", label: "ADP", sortKey: "adp",
@@ -165,23 +176,23 @@
 
     const ROSTER_COLUMNS = [
         {
-            key: "name", label: "Player",
+            key: "name", label: "Player", sortKey: "name",
             render: (p) => `<strong>${p.name}</strong>`,
         },
         {
-            key: "position", label: "Pos",
+            key: "position", label: "Pos", sortKey: "position",
             render: (p) => `<span class="pos-badge pos-${p.position}">${p.position}</span>`,
         },
         {
-            key: "team", label: "Team",
+            key: "team", label: "Team", sortKey: "team",
             render: (p) => p.team,
         },
         {
-            key: "bye_week", label: "Bye",
+            key: "bye_week", label: "Bye", sortKey: "bye_week",
             render: (p) => p.bye_week || "—",
         },
         {
-            key: "projected_total", label: "Proj Pts",
+            key: "projected_total", label: "Proj Pts", sortKey: "projected_total",
             render: (p) => p.projected_total,
         },
     ];
@@ -193,7 +204,9 @@
             .map((c) => {
                 const attrs = [];
                 if (c.id) attrs.push(`id="${c.id}"`);
-                if (c.cls) attrs.push(`class="${c.cls}"`);
+                const classes = c.cls ? c.cls.split(" ") : [];
+                if (c.sortKey && !classes.includes("sortable")) classes.push("sortable");
+                if (classes.length) attrs.push(`class="${classes.join(" ")}"`);
                 if (c.sortKey) attrs.push(`data-sort="${c.sortKey}"`);
                 if (c.title) attrs.push(`title="${c.title}"`);
                 return `<th ${attrs.join(" ")}>${c.label}</th>`;
@@ -217,29 +230,8 @@
         return columns.filter((c) => !c.hidden || !c.hidden(ctx)).length;
     }
 
-    // Score column labels per strategy
-    const SCORE_LABELS = {
-        "vbd": "VBD",
-        "vona": "VONA",
-        "bpa": "Proj Pts",
-        "zero-rb": "VBD",
-        "robust-rb": "VBD",
-    };
-
-    const SCORE_TOOLTIPS = {
-        "vbd": "Value over positional replacement level",
-        "vona": "Composite: VBD × roster fit + VONA urgency + risk adjustment",
-        "bpa": "Total projected season points",
-        "zero-rb": "Value over positional replacement level",
-        "robust-rb": "Value over positional replacement level",
-    };
-
     function updateScoreHeader() {
-        const el = $("#score-header");
-        if (el) {
-            el.textContent = SCORE_LABELS[currentStrategy] || "Score";
-            el.title = SCORE_TOOLTIPS[currentStrategy] || "";
-        }
+        // VBD Score column is strategy-independent — no label changes needed
     }
 
     // Strategy tabs
@@ -623,10 +615,29 @@
     }
 
     function renderRoster(state) {
-        const roster = state.user_roster || [];
+        let roster = state.user_roster || [];
         const needs = state.team_needs || {};
 
         renderTableHeader(ROSTER_COLUMNS, $("#roster-head"));
+
+        // Mark the active sort column and bind click handlers
+        $$("#roster-head th.sortable").forEach((th) => {
+            const key = th.dataset.sort;
+            if (rosterSort && rosterSort.key === key) {
+                th.classList.add("active");
+                th.textContent += rosterSort.asc ? " ▲" : " ▼";
+            }
+            th.addEventListener("click", () => {
+                if (rosterSort && rosterSort.key === key) {
+                    rosterSort.asc = !rosterSort.asc;
+                } else {
+                    // Default: strings ascending, numbers descending
+                    const numericKeys = new Set(["bye_week", "projected_total"]);
+                    rosterSort = { key, asc: !numericKeys.has(key) };
+                }
+                if (currentState) renderRoster(currentState);
+            });
+        });
 
         rosterNeeds.innerHTML = Object.entries(needs)
             .map(([pos, count]) => {
@@ -641,6 +652,18 @@
             rosterBody.innerHTML =
                 `<tr><td colspan="${colSpan}" class="empty-msg">No picks yet</td></tr>`;
             return;
+        }
+
+        // Sort roster if a sort column is active
+        if (rosterSort) {
+            const k = rosterSort.key;
+            roster = roster.slice().sort((a, b) => {
+                const av = a[k] ?? "", bv = b[k] ?? "";
+                const cmp = typeof av === "number" && typeof bv === "number"
+                    ? av - bv
+                    : String(av).localeCompare(String(bv));
+                return rosterSort.asc ? cmp : -cmp;
+            });
         }
 
         rosterBody.innerHTML = roster
