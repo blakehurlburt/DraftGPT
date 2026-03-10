@@ -29,7 +29,6 @@
     const tickerList = $("#ticker-list");
     const draftBoard = $("#draft-board");
     const posFilter = $("#pos-filter");
-    const scoreHeader = $("#score-header");
     const showMoreBtn = $("#show-more-btn");
     const simPanel = $("#sim-panel");
     const simContent = $("#sim-content");
@@ -37,8 +36,6 @@
     const simProgressFill = $("#sim-progress-fill");
     const simProgressText = $("#sim-progress-text");
     const simStrategies = $("#sim-strategies");
-    const simValueHeader = $("#sim-value-header");
-
     let currentStrategy = "vbd";
     let currentAdp = "consensus";
     let currentRisk = "balanced";  // "safe", "balanced", "aggressive"
@@ -93,6 +90,128 @@
         return trimmed;
     }
 
+    // ── Column definitions ───────────────────────────────────────────
+    // Each column: { key, label, title?, cls?, sortKey?, id?, hidden?(ctx),
+    //               render(row, ctx) -> html string for <td> contents }
+    // "ctx" = { showSim, currentStrategy, getSimValue }
+
+    const REC_COLUMNS = [
+        {
+            key: "rank", label: "#", sortKey: "rank",
+            title: "Strategy recommendation rank (click to sort)",
+            cls: "sortable active",
+            render: (r) => r.rank,
+        },
+        {
+            key: "name", label: "Player",
+            render: (r) => `<strong>${r.name}</strong>`,
+        },
+        {
+            key: "position", label: "Pos",
+            render: (r) => `<span class="pos-badge pos-${r.position}">${r.position}</span>`,
+        },
+        {
+            key: "team", label: "Team",
+            render: (r) => r.team,
+        },
+        {
+            key: "bye_week", label: "Bye", title: "Bye week",
+            render: (r) => r.bye_week || "—",
+        },
+        {
+            key: "projected_total", label: "Proj",
+            title: "Projected season total points",
+            render: (r) => r.projected_total,
+        },
+        {
+            key: "total_floor", label: "Floor",
+            title: "10th percentile projection (pessimistic)",
+            tdClass: "range-floor",
+            render: (r) => r.total_floor || "—",
+        },
+        {
+            key: "total_ceiling", label: "Ceil",
+            title: "90th percentile projection (optimistic)",
+            tdClass: "range-ceil",
+            render: (r) => r.total_ceiling || "—",
+        },
+        {
+            key: "strategy_score", label: "VBD", id: "score-header",
+            title: "Strategy-specific score",
+            render: (r) => r.strategy_score ?? "—",
+        },
+        {
+            key: "adp", label: "ADP", sortKey: "adp",
+            title: "Average Draft Position (click to sort)",
+            cls: "sortable",
+            render: (r) => r.adp && r.adp < 999 ? r.adp : "—",
+        },
+        {
+            key: "sim", label: "Sim", id: "sim-value-header",
+            title: "Expected lineup total if you pick this player (from Monte Carlo sim)",
+            hidden: (ctx) => !ctx.showSim,
+            render: (r, ctx) => {
+                const sv = ctx.getSimValue(r.name);
+                return sv != null ? sv.toFixed(1) : "—";
+            },
+            tdClass: "sim-value",
+        },
+    ];
+
+    const ROSTER_COLUMNS = [
+        {
+            key: "name", label: "Player",
+            render: (p) => `<strong>${p.name}</strong>`,
+        },
+        {
+            key: "position", label: "Pos",
+            render: (p) => `<span class="pos-badge pos-${p.position}">${p.position}</span>`,
+        },
+        {
+            key: "team", label: "Team",
+            render: (p) => p.team,
+        },
+        {
+            key: "bye_week", label: "Bye",
+            render: (p) => p.bye_week || "—",
+        },
+        {
+            key: "projected_total", label: "Proj Pts",
+            render: (p) => p.projected_total,
+        },
+    ];
+
+    function renderTableHeader(columns, theadEl, ctx = {}) {
+        if (!theadEl) return;
+        const ths = columns
+            .filter((c) => !c.hidden || !c.hidden(ctx))
+            .map((c) => {
+                const attrs = [];
+                if (c.id) attrs.push(`id="${c.id}"`);
+                if (c.cls) attrs.push(`class="${c.cls}"`);
+                if (c.sortKey) attrs.push(`data-sort="${c.sortKey}"`);
+                if (c.title) attrs.push(`title="${c.title}"`);
+                return `<th ${attrs.join(" ")}>${c.label}</th>`;
+            })
+            .join("");
+        theadEl.innerHTML = `<tr>${ths}</tr>`;
+    }
+
+    function renderTableRow(columns, row, ctx = {}) {
+        const tds = columns
+            .filter((c) => !c.hidden || !c.hidden(ctx))
+            .map((c) => {
+                const cls = c.tdClass ? ` class="${c.tdClass}"` : "";
+                return `<td${cls}>${c.render(row, ctx)}</td>`;
+            })
+            .join("");
+        return `<tr>${tds}</tr>`;
+    }
+
+    function visibleColCount(columns, ctx = {}) {
+        return columns.filter((c) => !c.hidden || !c.hidden(ctx)).length;
+    }
+
     // Score column labels per strategy
     const SCORE_LABELS = {
         "vbd": "VBD",
@@ -111,8 +230,11 @@
     };
 
     function updateScoreHeader() {
-        scoreHeader.textContent = SCORE_LABELS[currentStrategy] || "Score";
-        scoreHeader.title = SCORE_TOOLTIPS[currentStrategy] || "";
+        const el = $("#score-header");
+        if (el) {
+            el.textContent = SCORE_LABELS[currentStrategy] || "Score";
+            el.title = SCORE_TOOLTIPS[currentStrategy] || "";
+        }
     }
 
     // Strategy tabs
@@ -183,16 +305,6 @@
         simCollapsed = !simCollapsed;
         simContent.classList.toggle("hidden", simCollapsed);
         simToggle.textContent = simCollapsed ? "Show" : "Hide";
-    });
-
-    // Sortable column headers
-    $$("th.sortable").forEach((th) => {
-        th.addEventListener("click", () => {
-            currentSort = th.dataset.sort;
-            $$("th.sortable").forEach((t) => t.classList.remove("active"));
-            th.classList.add("active");
-            if (currentState) renderRecommendations(currentState);
-        });
     });
 
     // Position filter checkboxes
@@ -450,6 +562,21 @@
 
     function renderRecommendations(state) {
         const allRecs = getAllRecsForStrategy(currentStrategy);
+        const ctx = { showSim: !!simData, currentStrategy, getSimValue };
+
+        // Render header (updates score label, sim column visibility)
+        renderTableHeader(REC_COLUMNS, $("#rec-head"), ctx);
+        updateScoreHeader();
+
+        // Re-bind sortable header clicks (header was just re-rendered)
+        $$("#rec-head th.sortable").forEach((th) => {
+            th.addEventListener("click", () => {
+                currentSort = th.dataset.sort;
+                $$("#rec-head th.sortable").forEach((t) => t.classList.remove("active"));
+                th.classList.add("active");
+                if (currentState) renderRecommendations(currentState);
+            });
+        });
 
         // Apply position filter first, then cap to displayCount
         let filtered = allRecs.filter((r) => posFilters.has(r.position));
@@ -465,43 +592,20 @@
         const hasMore = filtered.length > displayCount;
         filtered = filtered.slice(0, displayCount);
 
-        const colSpan = simData ? "11" : "10";
+        const colSpan = visibleColCount(REC_COLUMNS, ctx);
 
         if (!filtered.length) {
             const msg = !allRecs.length
                 ? (state.is_my_turn ? "No recommendations available" : "Recommendations appear on your turn")
                 : "No players match current filters";
             recBody.innerHTML =
-                '<tr><td colspan="' + colSpan + '" class="empty-msg">' + msg + "</td></tr>";
+                `<tr><td colspan="${colSpan}" class="empty-msg">${msg}</td></tr>`;
             showMoreBtn.classList.add("hidden");
             return;
         }
 
-        const showSim = !!simData;
-
         recBody.innerHTML = filtered
-            .map(
-                (r) => {
-                    const sv = showSim ? getSimValue(r.name) : null;
-                    const simCell = showSim
-                        ? `<td class="sim-value">${sv != null ? sv.toFixed(1) : "—"}</td>`
-                        : "";
-                    return `
-            <tr>
-                <td>${r.rank}</td>
-                <td><strong>${r.name}</strong></td>
-                <td><span class="pos-badge pos-${r.position}">${r.position}</span></td>
-                <td>${r.team}</td>
-                <td>${r.bye_week || "—"}</td>
-                <td>${r.projected_total}</td>
-                <td class="range-floor">${r.total_floor || "—"}</td>
-                <td class="range-ceil">${r.total_ceiling || "—"}</td>
-                <td>${r.strategy_score ?? "—"}</td>
-                <td>${r.adp && r.adp < 999 ? r.adp : "—"}</td>
-                ${simCell}
-            </tr>`;
-                }
-            )
+            .map((r) => renderTableRow(REC_COLUMNS, r, ctx))
             .join("");
 
         // Show "show more" button when it's our turn and there are more to show
@@ -517,6 +621,8 @@
         const roster = state.user_roster || [];
         const needs = state.team_needs || {};
 
+        renderTableHeader(ROSTER_COLUMNS, $("#roster-head"));
+
         rosterNeeds.innerHTML = Object.entries(needs)
             .map(([pos, count]) => {
                 const urgent = count >= 2 ? "urgent" : "";
@@ -524,23 +630,16 @@
             })
             .join("");
 
+        const colSpan = visibleColCount(ROSTER_COLUMNS);
+
         if (!roster.length) {
             rosterBody.innerHTML =
-                '<tr><td colspan="5" class="empty-msg">No picks yet</td></tr>';
+                `<tr><td colspan="${colSpan}" class="empty-msg">No picks yet</td></tr>`;
             return;
         }
 
         rosterBody.innerHTML = roster
-            .map(
-                (p) => `
-            <tr>
-                <td><strong>${p.name}</strong></td>
-                <td><span class="pos-badge pos-${p.position}">${p.position}</span></td>
-                <td>${p.team}</td>
-                <td>${p.bye_week || "—"}</td>
-                <td>${p.projected_total}</td>
-            </tr>`
-            )
+            .map((p) => renderTableRow(ROSTER_COLUMNS, p))
             .join("");
     }
 
@@ -632,12 +731,10 @@
     function renderSimInsights(data) {
         if (!data || !data.sims_target) {
             simPanel.classList.add("hidden");
-            simValueHeader.classList.add("hidden");
             return;
         }
 
         simPanel.classList.remove("hidden");
-        simValueHeader.classList.remove("hidden");
 
         // Progress bar
         const pct = Math.min(100, (data.sims_completed / data.sims_target) * 100);
@@ -718,6 +815,12 @@
             // Silently ignore — non-critical UI
         }
     })();
+
+    // Render initial empty table headers
+    renderTableHeader(REC_COLUMNS, $("#rec-head"), { showSim: false });
+    recBody.innerHTML = `<tr><td colspan="${visibleColCount(REC_COLUMNS, { showSim: false })}" class="empty-msg">Connect to a draft to see recommendations</td></tr>`;
+    renderTableHeader(ROSTER_COLUMNS, $("#roster-head"));
+    rosterBody.innerHTML = `<tr><td colspan="${visibleColCount(ROSTER_COLUMNS)}" class="empty-msg">No picks yet</td></tr>`;
 
     // Auto-reconnect: check URL params on page load
     (function autoConnect() {

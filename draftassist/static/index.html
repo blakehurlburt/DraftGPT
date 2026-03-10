@@ -84,24 +84,8 @@
                     </div>
                 </div>
                 <table id="rec-table">
-                    <thead>
-                        <tr>
-                            <th class="sortable active" data-sort="rank" title="Strategy recommendation rank (click to sort)">#</th>
-                            <th>Player</th>
-                            <th>Pos</th>
-                            <th>Team</th>
-                            <th title="Bye week">Bye</th>
-                            <th title="Projected season total points">Proj</th>
-                            <th title="10th percentile projection (pessimistic)">Floor</th>
-                            <th title="90th percentile projection (optimistic)">Ceil</th>
-                            <th id="score-header" title="Strategy-specific score">VBD</th>
-                            <th class="sortable" data-sort="adp" title="Average Draft Position (click to sort)">ADP</th>
-                            <th id="sim-value-header" class="hidden" title="Expected lineup total if you pick this player (from Monte Carlo sim)">Sim</th>
-                        </tr>
-                    </thead>
-                    <tbody id="rec-body">
-                        <tr><td colspan="10" class="empty-msg">Connect to a draft to see recommendations</td></tr>
-                    </tbody>
+                    <thead id="rec-head"></thead>
+                    <tbody id="rec-body"></tbody>
                 </table>
                 <button id="show-more-btn" class="hidden">Show more</button>
             </section>
@@ -130,18 +114,8 @@
                 <h2>My Roster</h2>
                 <div id="roster-needs"></div>
                 <table id="roster-table">
-                    <thead>
-                        <tr>
-                            <th>Player</th>
-                            <th>Pos</th>
-                            <th>Team</th>
-                            <th>Bye</th>
-                            <th>Proj Pts</th>
-                        </tr>
-                    </thead>
-                    <tbody id="roster-body">
-                        <tr><td colspan="5" class="empty-msg">No picks yet</td></tr>
-                    </tbody>
+                    <thead id="roster-head"></thead>
+                    <tbody id="roster-body"></tbody>
                 </table>
             </section>
 
@@ -160,6 +134,6 @@
         </div>
     </main>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=2"></script>
 </body>
 </html>

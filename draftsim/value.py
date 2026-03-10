@@ -1,5 +1,6 @@
 """Replacement levels, VBD, and VONA valuation math."""
 
+import math
 from statistics import mean as _mean
 
 from .config import LeagueConfig
