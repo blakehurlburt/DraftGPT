@@ -855,6 +855,25 @@ td.sim-value {
     font-size: 13px;
 }
 
+/* Rookie badge */
+.rookie-badge {
+    display: inline-block;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 700;
+    background: #ff9800;
+    color: #fff;
+    vertical-align: middle;
+    margin-left: 4px;
+    line-height: 1.2;
+}
+
+.rookie-chip {
+    background: #ff9800;
+    color: #fff;
+}
+
 /* Responsive */
 @media (max-width: 900px) {
     main { flex-direction: column; }

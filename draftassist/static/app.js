@@ -42,6 +42,7 @@
     let currentValueMode = "vbd_score";  // "vorp", "vona", "vols", "vbd_score"
     let currentSort = "value";  // "value", "adp", or "rank"
     let posFilters = new Set(["QB", "RB", "WR", "TE"]);
+    let rookieOnly = false;
     let currentState = null;
     let eventSource = null;
     let notificationsEnabled = false;
@@ -328,6 +329,12 @@
         });
     });
 
+    // Rookie-only filter
+    $("#rookie-only").addEventListener("change", (e) => {
+        rookieOnly = e.target.checked;
+        if (currentState) renderRecommendations(currentState);
+    });
+
     // Show more button
     showMoreBtn.addEventListener("click", async () => {
         displayCount += 10;
@@ -584,7 +591,7 @@
         });
 
         // Apply position filter first, then cap to displayCount
-        let filtered = allRecs.filter((r) => posFilters.has(r.position));
+        let filtered = allRecs.filter((r) => posFilters.has(r.position) && (!rookieOnly || r.is_rookie));
 
         // Apply sort
         if (currentSort === "adp") {
@@ -693,7 +700,7 @@
             <li class="${p.is_user ? "user-pick" : ""}">
                 <span class="pick-num">${p.pick_no}.</span>
                 <span class="pos-badge pos-${p.position}">${p.position}</span>
-                <span>${p.player_name}</span>
+                <span>${p.player_name}${p.is_rookie ? ' <span class="rookie-badge" title="Rookie">R</span>' : ""}</span>
                 <span style="color:#4a5a6a">${p.team}</span>
                 <span class="team-slot">Team ${p.draft_slot}</span>
             </li>`
