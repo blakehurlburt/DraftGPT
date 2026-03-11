@@ -36,11 +36,11 @@
     const simProgressFill = $("#sim-progress-fill");
     const simProgressText = $("#sim-progress-text");
     const simStrategies = $("#sim-strategies");
-    let currentStrategy = "vbd";
+    let currentStrategy = "vona";  // strategy used for generating recommendations
     let currentAdp = "consensus";
     let currentRisk = "balanced";  // "safe", "balanced", "aggressive"
     let currentValueMode = "vbd_score";  // "vorp", "vona", "vols", "vbd_score"
-    let currentSort = "rank";  // "rank" or "adp"
+    let currentSort = "value";  // "value", "adp", or "rank"
     let posFilters = new Set(["QB", "RB", "WR", "TE"]);
     let currentState = null;
     let eventSource = null;
@@ -101,7 +101,7 @@
         {
             key: "rank", label: "#", sortKey: "rank",
             title: "Strategy recommendation rank (click to sort)",
-            cls: "sortable active",
+            cls: "sortable",
             render: (r) => r.rank,
         },
         {
@@ -139,7 +139,9 @@
         },
         {
             key: "value", label: "VBD", id: "value-header",
+            sortKey: "value",
             title: "Composite VBD Score — aggregates VORP + VONA + VOLS",
+            cls: "sortable active",
             render: (r, ctx) => {
                 const v = r[ctx.valueMode];
                 return v != null && v > 0 ? v.toFixed(1) : "—";
@@ -241,20 +243,10 @@
         }
     }
 
-    // Strategy tabs
+    // Value mode tabs (VBD / VORP / VONA / VOLS)
     $$(".tab").forEach((tab) => {
         tab.addEventListener("click", () => {
             $$(".tab").forEach((t) => t.classList.remove("active"));
-            tab.classList.add("active");
-            currentStrategy = tab.dataset.strategy;
-            if (currentState) renderRecommendations(currentState);
-        });
-    });
-
-    // Value mode tabs
-    $$(".value-tab").forEach((tab) => {
-        tab.addEventListener("click", () => {
-            $$(".value-tab").forEach((t) => t.classList.remove("active"));
             tab.classList.add("active");
             currentValueMode = tab.dataset.value;
             if (currentState) renderRecommendations(currentState);
@@ -597,6 +589,9 @@
         // Apply sort
         if (currentSort === "adp") {
             filtered = filtered.slice().sort((a, b) => a.adp - b.adp);
+        } else if (currentSort === "value") {
+            const key = currentValueMode;
+            filtered = filtered.slice().sort((a, b) => (b[key] || 0) - (a[key] || 0));
         } else {
             filtered = filtered.slice().sort((a, b) => a.rank - b.rank);
         }
