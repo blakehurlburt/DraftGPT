@@ -7,7 +7,7 @@ from draftsim.players import Player, load_players
 from draftsim.config import LeagueConfig
 from draftsim.draft import DraftState, build_snake_order
 from draftsim.strategies import (
-    pick_bpa, pick_vbd, pick_vona, pick_zero_rb, pick_robust_rb,
+    pick_bpa, pick_vbd, pick_vona,
     get_strategy, STRATEGIES, _eligible, _force_need_pick,
 )
 from draftsim.value import (
@@ -415,8 +415,8 @@ class TestValue:
 
 class TestStrategies:
     def test_registry(self):
-        assert len(STRATEGIES) == 5
-        for name in ["bpa", "vbd", "vona", "zero-rb", "robust-rb"]:
+        assert len(STRATEGIES) == 3
+        for name in ["bpa", "vbd", "vona"]:
             assert name in STRATEGIES
             assert get_strategy(name) is STRATEGIES[name]
 
@@ -438,20 +438,6 @@ class TestStrategies:
     def test_vona_returns_player(self, sample_players, small_config):
         state = DraftState.create(small_config, sample_players)
         pick = pick_vona(state, 0, players=sample_players)
-        assert isinstance(pick, Player)
-
-    def test_zero_rb_avoids_rb_early(self, sample_players, small_config):
-        state = DraftState.create(small_config, sample_players)
-        pick = pick_zero_rb(state, 0, players=sample_players)
-        # In round 1, zero-rb should avoid RBs (if non-RB options exist)
-        assert pick.position != "RB"
-
-    def test_robust_rb_prefers_rb_early(self, sample_players, small_config):
-        state = DraftState.create(small_config, sample_players)
-        pick = pick_robust_rb(state, 0, players=sample_players)
-        # robust-rb should take RB if within 80% of top VBD
-        # With our test data, RB_1 (300) is close to QB Alpha (340),
-        # so it depends on VBD. Just assert it returns a valid player.
         assert isinstance(pick, Player)
 
     def test_all_strategies_complete_draft(self, sample_players, small_config):

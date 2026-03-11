@@ -26,7 +26,7 @@ from draftsim.value import compute_dynamic_replacement_levels, compute_replaceme
 from draftsim.live_sim import SimSnapshot, run_live_simulation
 
 from .bridge import build_player_index, config_from_sleeper_meta, rebuild_draft_state
-from .recommender import get_all_recommendations
+from .recommender import get_recommendations
 from .sleeper import fetch_all_players, fetch_draft_meta, fetch_draft_picks
 
 log = logging.getLogger("draftassist")
@@ -196,43 +196,44 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
     recs = {}
     if is_my_turn and not skip_recommendations:
         for rp in ("safe", "balanced", "aggressive"):
-            all_recs = get_all_recommendations(
+            rec_list = get_recommendations(
                 state, user_slot, players, adp_order, n=30, risk_profile=rp,
             )
-            recs[rp] = {}
-            for strat_name, rec_list in all_recs.items():
-                recs[rp][strat_name] = [
-                    {
-                        "rank": r.rank,
-                        "name": r.player.name,
-                        "position": r.player.position,
-                        "team": r.player.team,
-                        "projected_total": round(r.player.projected_total, 1),
-                        "total_floor": round(r.player.total_floor, 1),
-                        "total_ceiling": round(r.player.total_ceiling, 1),
-                        "vorp": round(r.vbd_value, 1),
-                        "vona": round(r.vona_value, 1),
-                        "vols": round(r.vols_value, 1),
-                        "vbd_score": round(r.vbd_score_value, 1),
-                        "strategy_score": round(r.strategy_score, 1),
-                        "bye_week": r.player.bye_week,
-                        "adp": adp_rank.get(r.player.name, 999),
-                    }
-                    for r in rec_list
-                ]
+            recs[rp] = [
+                {
+                    "rank": r.rank,
+                    "name": r.player.name,
+                    "position": r.player.position,
+                    "team": r.player.team,
+                    "projected_total": round(r.player.projected_total, 1),
+                    "total_floor": round(r.player.total_floor, 1),
+                    "total_ceiling": round(r.player.total_ceiling, 1),
+                    "vorp": round(r.vbd_value, 1),
+                    "vona": round(r.vona_value, 1),
+                    "vols": round(r.vols_value, 1),
+                    "vbd_score": round(r.vbd_score_value, 1),
+                    "bye_week": r.player.bye_week,
+                    "is_rookie": r.player.is_rookie,
+                    "adp": adp_rank.get(r.player.name, 999),
+                }
+                for r in rec_list
+            ]
 
     # All picks sorted by pick number
+    rookie_names = {p.name for p in players if p.is_rookie}
     all_picks_list = []
     sorted_picks = sorted(picks, key=lambda p: p.get("pick_no", 0))
     for p in sorted_picks:
         pm = p.get("metadata", {})
+        pname = f"{pm.get('first_name', '')} {pm.get('last_name', '')}".strip()
         all_picks_list.append({
             "pick_no": p.get("pick_no", 0),
             "round": p.get("round", 0),
             "draft_slot": p.get("draft_slot", 0),
-            "player_name": f"{pm.get('first_name', '')} {pm.get('last_name', '')}".strip(),
+            "player_name": pname,
             "position": pm.get("position", ""),
             "team": pm.get("team", ""),
+            "is_rookie": pname in rookie_names,
             "is_user": p.get("draft_slot", -1) == user_slot + 1,  # Sleeper uses 1-indexed
         })
     recent = all_picks_list[-15:]
@@ -255,6 +256,7 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
             "team": p.team,
             "projected_total": round(p.projected_total, 1),
             "bye_week": p.bye_week,
+            "is_rookie": p.is_rookie,
             "vbd": round(vbd(p, replacement), 1),
         })
 
@@ -602,31 +604,29 @@ async def get_more_recommendations(
 
     recs = {}
     for rp in ("safe", "balanced", "aggressive"):
-        all_recs = get_all_recommendations(
+        rec_list = get_recommendations(
             state, slot, sess.players, sess.adp_order, n=total,
             risk_profile=rp,
         )
-        recs[rp] = {}
-        for strat_name, rec_list in all_recs.items():
-            recs[rp][strat_name] = [
-                {
-                    "rank": r.rank,
-                    "name": r.player.name,
-                    "position": r.player.position,
-                    "team": r.player.team,
-                    "projected_total": round(r.player.projected_total, 1),
-                    "total_floor": round(r.player.total_floor, 1),
-                    "total_ceiling": round(r.player.total_ceiling, 1),
-                    "vorp": round(r.vbd_value, 1),
-                    "vona": round(r.vona_value, 1),
-                    "vols": round(r.vols_value, 1),
-                    "vbd_score": round(r.vbd_score_value, 1),
-                    "strategy_score": round(r.strategy_score, 1),
-                    "bye_week": r.player.bye_week,
-                    "adp": adp_rank.get(r.player.name, 999),
-                }
-                for r in rec_list[offset:]
-            ]
+        recs[rp] = [
+            {
+                "rank": r.rank,
+                "name": r.player.name,
+                "position": r.player.position,
+                "team": r.player.team,
+                "projected_total": round(r.player.projected_total, 1),
+                "total_floor": round(r.player.total_floor, 1),
+                "total_ceiling": round(r.player.total_ceiling, 1),
+                "vorp": round(r.vbd_value, 1),
+                "vona": round(r.vona_value, 1),
+                "vols": round(r.vols_value, 1),
+                "vbd_score": round(r.vbd_score_value, 1),
+                "bye_week": r.player.bye_week,
+                "is_rookie": r.player.is_rookie,
+                "adp": adp_rank.get(r.player.name, 999),
+            }
+            for r in rec_list[offset:]
+        ]
 
     return JSONResponse({"recommendations": recs})
 

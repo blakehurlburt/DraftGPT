@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from draftsim.draft import DraftState
 from draftsim.players import Player
-from draftsim.strategies import STRATEGIES, _var_bonus
+from draftsim.strategies import _var_bonus, pick_vona
 from draftsim.value import (
     compute_dynamic_replacement_levels,
     compute_last_starter_levels,
@@ -60,7 +60,7 @@ def _compute_strategy_score(
             pos_v = 0.0
         return player_vbd * discount + pos_v * weight + var
     else:
-        # vbd, zero-rb, robust-rb all use VBD as their core metric
+        # vbd uses VBD as its core metric
         return vbd(player, replacement) * discount + var
 
 
@@ -149,17 +149,18 @@ def top_n_picks(
     return picks
 
 
-def get_all_recommendations(
+def get_recommendations(
     state: DraftState,
     team_idx: int,
     players: list[Player],
     adp_order: list[str] | None = None,
     n: int = 5,
     risk_profile: str = "balanced",
-) -> dict[str, list[Recommendation]]:
-    """Run top_n_picks for all 5 strategies.
+) -> list[Recommendation]:
+    """Get top-N recommendations using the VONA strategy.
 
-    Returns dict mapping strategy_name -> list of Recommendations.
+    Returns a flat list of Recommendations with all value metrics populated
+    (VORP, VONA, VOLS, VBD Score).
     """
     if adp_order is None:
         adp_order = [
@@ -168,13 +169,8 @@ def get_all_recommendations(
             )
         ]
 
-    results: dict[str, list[Recommendation]] = {}
-
-    for name, fn in STRATEGIES.items():
-        results[name] = top_n_picks(
-            fn, state, team_idx, n=n,
-            strategy_name=name, adp_order=adp_order, players=players,
-            risk_profile=risk_profile,
-        )
-
-    return results
+    return top_n_picks(
+        pick_vona, state, team_idx, n=n,
+        strategy_name="vona", adp_order=adp_order, players=players,
+        risk_profile=risk_profile,
+    )

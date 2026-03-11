@@ -25,6 +25,7 @@ class Player:
     total_floor: float = 0.0   # 10th percentile season total
     total_ceiling: float = 0.0  # 90th percentile season total
     bye_week: int = 0
+    is_rookie: bool = False
     sleeper_id: str = ""
 
     @property

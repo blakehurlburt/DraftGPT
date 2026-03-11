@@ -4,8 +4,8 @@
 Usage:
     python run_draftsim.py                              # 12-team, all slots, VBD/BPA/VONA
     python run_draftsim.py --teams 10 --slot 3          # 10-team, 3rd pick
-    python run_draftsim.py --strategy zero-rb --sims 10000
-    python run_draftsim.py --compare                    # all 5 strategies head-to-head
+    python run_draftsim.py --strategy vona --sims 10000
+    python run_draftsim.py --compare                    # all strategies head-to-head
     python run_draftsim.py --platform sleeper           # use Sleeper mock ADP for opponents
 """
 
@@ -42,11 +42,11 @@ def main():
     )
     parser.add_argument(
         "--strategy", type=str, default=None,
-        help="Strategy to use: bpa, vbd, vona, zero-rb, robust-rb"
+        help="Strategy to use: bpa, vbd, vona"
     )
     parser.add_argument(
         "--compare", action="store_true",
-        help="Compare all 5 strategies head-to-head"
+        help="Compare all strategies head-to-head"
     )
     parser.add_argument(
         "--sims", type=int, default=5000,
@@ -84,7 +84,7 @@ def main():
 
     # Determine strategies
     if args.compare:
-        strategies = ["bpa", "vbd", "vona", "zero-rb", "robust-rb"]
+        strategies = ["bpa", "vbd", "vona"]
     elif args.strategy:
         strategies = [args.strategy]
     else:

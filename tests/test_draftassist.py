@@ -5,7 +5,6 @@ import pytest
 from draftsim.players import Player, load_players
 from draftsim.config import LeagueConfig
 from draftsim.draft import DraftState
-from draftsim.strategies import STRATEGIES
 
 from draftassist.bridge import (
     _normalize,
@@ -16,7 +15,7 @@ from draftassist.bridge import (
 )
 from draftassist.recommender import (
     top_n_picks,
-    get_all_recommendations,
+    get_recommendations,
     Recommendation,
 )
 
@@ -284,32 +283,28 @@ class TestTopNPicks:
 
 
 # ---------------------------------------------------------------------------
-# recommender.get_all_recommendations
+# recommender.get_recommendations
 # ---------------------------------------------------------------------------
 
-class TestGetAllRecommendations:
-    def test_returns_all_strategies(self, sample_players, small_config):
+class TestGetRecommendations:
+    def test_returns_flat_list(self, sample_players, small_config):
         state = DraftState.create(small_config, sample_players)
-        recs = get_all_recommendations(state, 0, sample_players)
-        assert set(recs.keys()) == set(STRATEGIES.keys())
-        for name, rec_list in recs.items():
-            assert len(rec_list) <= 5
-            assert all(isinstance(r, Recommendation) for r in rec_list)
+        recs = get_recommendations(state, 0, sample_players)
+        assert isinstance(recs, list)
+        assert len(recs) <= 5
+        assert all(isinstance(r, Recommendation) for r in recs)
 
     def test_vbd_values_present(self, sample_players, small_config):
         state = DraftState.create(small_config, sample_players)
-        recs = get_all_recommendations(state, 0, sample_players)
-        for name, rec_list in recs.items():
-            assert len(rec_list) > 0, f"No recommendations for {name}"
-            for r in rec_list:
-                assert isinstance(r.vbd_value, (int, float))
+        recs = get_recommendations(state, 0, sample_players)
+        assert len(recs) > 0
+        for r in recs:
+            assert isinstance(r.vbd_value, (int, float))
 
     def test_with_real_players(self, real_players):
         config = LeagueConfig()
         state = DraftState.create(config, real_players)
-        recs = get_all_recommendations(state, 0, real_players)
+        recs = get_recommendations(state, 0, real_players)
         assert len(recs) == 5
-        for name, rec_list in recs.items():
-            assert len(rec_list) == 5
-            for r in rec_list:
-                assert r.player.projected_total > 0
+        for r in recs:
+            assert r.player.projected_total > 0

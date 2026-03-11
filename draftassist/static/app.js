@@ -97,6 +97,10 @@
     //               render(row, ctx) -> html string for <td> contents }
     // "ctx" = { showSim, currentStrategy, getSimValue }
 
+    function rookieBadge(row) {
+        return row.is_rookie ? ' <span class="rookie-badge" title="Rookie">R</span>' : "";
+    }
+
     const REC_COLUMNS = [
         {
             key: "rank", label: "#", sortKey: "rank",
@@ -106,7 +110,7 @@
         },
         {
             key: "name", label: "Player",
-            render: (r) => `<strong>${r.name}</strong>`,
+            render: (r) => `<strong>${r.name}</strong>${rookieBadge(r)}`,
         },
         {
             key: "position", label: "Pos",
@@ -168,7 +172,7 @@
     const ROSTER_COLUMNS = [
         {
             key: "name", label: "Player", sortKey: "name",
-            render: (p) => `<strong>${p.name}</strong>`,
+            render: (p) => `<strong>${p.name}</strong>${rookieBadge(p)}`,
         },
         {
             key: "position", label: "Pos", sortKey: "position",
@@ -341,8 +345,8 @@
         // Need more data from backend
         if (prefetchedRecs && Object.keys(prefetchedRecs).length) {
             _mergeNestedRecs(prefetchedRecs, extraRecs);
-            const anyRisk = Object.values(prefetchedRecs)[0] || {};
-            totalLoaded += Object.values(anyRisk)[0]?.length || 0;
+            const anyRisk = Object.values(prefetchedRecs)[0] || [];
+            totalLoaded += anyRisk.length || 0;
             prefetchedRecs = {};
             renderRecommendations(currentState);
             prefetchMore();
@@ -380,22 +384,18 @@
         return recs.filter((r) => posFilters.has(r.position)).length || 10;
     }
 
-    function getAllRecsForStrategy(strategy) {
-        // recommendations is nested: { risk: { strategy: [...] } }
-        const riskRecs = (currentState?.recommendations || {})[currentRisk] || {};
-        const base = riskRecs[strategy] || [];
-        const extra = (extraRecs[currentRisk] || {})[strategy] || [];
+    function getAllRecsForStrategy(_strategy) {
+        // recommendations is flat: { risk: [...] }
+        const base = (currentState?.recommendations || {})[currentRisk] || [];
+        const extra = extraRecs[currentRisk] || [];
         return [...base, ...extra];
     }
 
     function _mergeNestedRecs(source, target) {
-        // Merge { risk: { strategy: [...] } } from source into target
-        for (const [risk, strats] of Object.entries(source)) {
-            if (!target[risk]) target[risk] = {};
-            for (const [strat, recs] of Object.entries(strats)) {
-                if (!target[risk][strat]) target[risk][strat] = [];
-                target[risk][strat].push(...recs);
-            }
+        // Merge { risk: [...] } from source into target
+        for (const [risk, recs] of Object.entries(source)) {
+            if (!target[risk]) target[risk] = [];
+            target[risk].push(...recs);
         }
     }
 

@@ -69,6 +69,8 @@ def build_player_index(
         if key in lookup:
             player = lookup[key]
             player.sleeper_id = sid
+            if info.get("years_exp", 99) == 0:
+                player.is_rookie = True
             id_to_player[sid] = player
 
     return id_to_player
