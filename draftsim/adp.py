@@ -158,7 +158,7 @@ def generate_platform_adp(
 
 
 # Normalise ADP team abbreviations to match projections CSV
-_TEAM_ALIASES = {"JAC": "JAX", "LAR": "LA"}
+_TEAM_ALIASES = {"JAC": "JAX"}
 
 
 def load_bye_weeks(csv_path: Path | None = None) -> dict[str, int]:

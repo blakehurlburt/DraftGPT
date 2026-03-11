@@ -7,6 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+# Normalise team abbreviations so all code uses a single canonical form
+_TEAM_NORMALIZE = {"LA": "LAR"}
+
+
 @dataclass
 class Player:
     """A projected player available for drafting."""
@@ -63,7 +67,7 @@ def load_players(
                 Player(
                     name=row["player_display_name"],
                     position=position,
-                    team=row.get("current_team", ""),
+                    team=_TEAM_NORMALIZE.get(row.get("current_team", ""), row.get("current_team", "")),
                     projected_ppg=float(row["projected_ppg"]),
                     projected_games=float(row["projected_games"]),
                     projected_total=total,
