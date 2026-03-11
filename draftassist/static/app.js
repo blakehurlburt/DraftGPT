@@ -39,6 +39,7 @@
     let currentStrategy = "vbd";
     let currentAdp = "consensus";
     let currentRisk = "balanced";  // "safe", "balanced", "aggressive"
+    let currentValueMode = "vbd_score";  // "vorp", "vona", "vols", "vbd_score"
     let currentSort = "rank";  // "rank" or "adp"
     let posFilters = new Set(["QB", "RB", "WR", "TE"]);
     let currentState = null;
@@ -137,24 +138,12 @@
             render: (r) => r.total_ceiling || "—",
         },
         {
-            key: "vorp", label: "VORP",
-            title: "Value Over Replacement Player — points above the best waiver-wire player at this position",
-            render: (r) => r.vorp != null ? r.vorp.toFixed(1) : "—",
-        },
-        {
-            key: "vona", label: "VONA",
-            title: "Value Over Next Available — how much this position drops before your next pick",
-            render: (r) => r.vona != null && r.vona > 0 ? r.vona.toFixed(1) : "—",
-        },
-        {
-            key: "vols", label: "VOLS",
-            title: "Value Over Last Starter — points above the worst starter at this position across the league",
-            render: (r) => r.vols != null && r.vols > 0 ? r.vols.toFixed(1) : "—",
-        },
-        {
-            key: "vbd_score", label: "VBD", id: "score-header",
-            title: "Composite VBD Score — aggregates VORP + VONA + VOLS into one comparison number",
-            render: (r) => r.vbd_score != null ? r.vbd_score.toFixed(1) : "—",
+            key: "value", label: "VBD", id: "value-header",
+            title: "Composite VBD Score — aggregates VORP + VONA + VOLS",
+            render: (r, ctx) => {
+                const v = r[ctx.valueMode];
+                return v != null && v > 0 ? v.toFixed(1) : "—";
+            },
         },
         {
             key: "adp", label: "ADP", sortKey: "adp",
@@ -230,8 +219,26 @@
         return columns.filter((c) => !c.hidden || !c.hidden(ctx)).length;
     }
 
-    function updateScoreHeader() {
-        // VBD Score column is strategy-independent — no label changes needed
+    const VALUE_LABELS = {
+        "vbd_score": "VBD",
+        "vorp": "VORP",
+        "vona": "VONA",
+        "vols": "VOLS",
+    };
+
+    const VALUE_TOOLTIPS = {
+        "vbd_score": "Composite VBD Score — aggregates VORP + VONA + VOLS into one number for cross-position comparison",
+        "vorp": "Value Over Replacement Player — points above the best waiver-wire player at this position",
+        "vona": "Value Over Next Available — how much this position's value drops before your next pick",
+        "vols": "Value Over Last Starter — points above the worst starter at this position across the league",
+    };
+
+    function updateValueHeader() {
+        const el = $("#value-header");
+        if (el) {
+            el.textContent = VALUE_LABELS[currentValueMode] || "Value";
+            el.title = VALUE_TOOLTIPS[currentValueMode] || "";
+        }
     }
 
     // Strategy tabs
@@ -240,7 +247,16 @@
             $$(".tab").forEach((t) => t.classList.remove("active"));
             tab.classList.add("active");
             currentStrategy = tab.dataset.strategy;
-            updateScoreHeader();
+            if (currentState) renderRecommendations(currentState);
+        });
+    });
+
+    // Value mode tabs
+    $$(".value-tab").forEach((tab) => {
+        tab.addEventListener("click", () => {
+            $$(".value-tab").forEach((t) => t.classList.remove("active"));
+            tab.classList.add("active");
+            currentValueMode = tab.dataset.value;
             if (currentState) renderRecommendations(currentState);
         });
     });
@@ -559,11 +575,11 @@
 
     function renderRecommendations(state) {
         const allRecs = getAllRecsForStrategy(currentStrategy);
-        const ctx = { showSim: !!simData, currentStrategy, getSimValue };
+        const ctx = { showSim: !!simData, currentStrategy, getSimValue, valueMode: currentValueMode };
 
-        // Render header (updates score label, sim column visibility)
+        // Render header (updates value label, sim column visibility)
         renderTableHeader(REC_COLUMNS, $("#rec-head"), ctx);
-        updateScoreHeader();
+        updateValueHeader();
 
         // Re-bind sortable header clicks (header was just re-rendered)
         $$("#rec-head th.sortable").forEach((th) => {
@@ -845,8 +861,9 @@
     })();
 
     // Render initial empty table headers
-    renderTableHeader(REC_COLUMNS, $("#rec-head"), { showSim: false });
-    recBody.innerHTML = `<tr><td colspan="${visibleColCount(REC_COLUMNS, { showSim: false })}" class="empty-msg">Connect to a draft to see recommendations</td></tr>`;
+    const initCtx = { showSim: false, valueMode: currentValueMode };
+    renderTableHeader(REC_COLUMNS, $("#rec-head"), initCtx);
+    recBody.innerHTML = `<tr><td colspan="${visibleColCount(REC_COLUMNS, initCtx)}" class="empty-msg">Connect to a draft to see recommendations</td></tr>`;
     renderTableHeader(ROSTER_COLUMNS, $("#roster-head"));
     rosterBody.innerHTML = `<tr><td colspan="${visibleColCount(ROSTER_COLUMNS)}" class="empty-msg">No picks yet</td></tr>`;
 

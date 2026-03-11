@@ -149,14 +149,16 @@ def compute_last_starter_levels(
     """Projected points of the worst player who will end up as a starter.
 
     Unlike replacement levels (first waiver-wire player = N+1th), this returns
-    the Nth player — the last starter slot being filled.  FLEX slots are NOT
-    counted; only mandatory starter positions.
+    the Nth player — the last starter slot being filled.  FLEX starters ARE
+    counted since a player in a FLEX slot is still a starter.
     """
     starters = config.starter_slots()
+    flex_positions = config.flex_positions()
     all_positions = ["QB", "RB", "WR", "TE", "K", "DST"]
 
-    # Count already-filled starter slots across all teams
+    # Remaining starter need per position across all teams (including FLEX)
     remaining_need: dict[str, int] = {pos: 0 for pos in all_positions}
+    remaining_flex = 0
     for roster in teams:
         roster_counts: dict[str, int] = {}
         for p in roster:
@@ -165,6 +167,27 @@ def compute_last_starter_levels(
             have = roster_counts.get(pos, 0)
             required = starters.get(pos, 0)
             remaining_need[pos] += max(0, required - have)
+        # FLEX: count surplus flex-eligible beyond starters
+        flex_surplus = 0
+        for pos in flex_positions:
+            have = roster_counts.get(pos, 0)
+            required = starters.get(pos, 0)
+            flex_surplus += max(0, have - required)
+        flex_needed = config.num_flex()
+        remaining_flex += max(0, flex_needed - flex_surplus)
+
+    # Distribute remaining flex demand proportionally to available supply
+    if remaining_flex > 0:
+        flex_avail = {}
+        total_flex_avail = 0
+        for pos in flex_positions:
+            cnt = sum(1 for p in available if p.position == pos)
+            flex_avail[pos] = cnt
+            total_flex_avail += cnt
+        if total_flex_avail > 0:
+            for pos in flex_positions:
+                share = flex_avail[pos] / total_flex_avail
+                remaining_need[pos] += round(remaining_flex * share)
 
     # Group available players by position, sorted descending
     by_pos: dict[str, list[Player]] = {pos: [] for pos in all_positions}
@@ -179,7 +202,6 @@ def compute_last_starter_levels(
         count = remaining_need.get(pos, 0)
         pos_players = by_pos.get(pos, [])
         if count <= 0 or not pos_players:
-            # All starter slots filled or no players — use 0
             last_starter[pos] = 0.0
         else:
             # Last starter = the (count)th best available (0-indexed: count-1)

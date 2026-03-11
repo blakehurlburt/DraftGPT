@@ -62,6 +62,13 @@
                     <button class="tab" data-strategy="robust-rb" title="Robust-RB — prioritizes running backs in rounds 1-3 if they offer near-top value">Robust-RB</button>
                 </div>
                 <div id="filter-bar">
+                    <div id="value-tabs">
+                        <span class="value-label" title="Which value metric to display in the Value column">Value:</span>
+                        <button class="value-tab active" data-value="vbd_score" title="Composite VBD Score — aggregates VORP + VONA + VOLS into one number for cross-position comparison">VBD</button>
+                        <button class="value-tab" data-value="vorp" title="Value Over Replacement Player — how many more points this player scores vs. the best waiver-wire player at the same position. Higher = more valuable than what you could get for free">VORP</button>
+                        <button class="value-tab" data-value="vona" title="Value Over Next Available — how much this position's value drops between now and your next pick. Higher = more urgent to draft now before the position dries up">VONA</button>
+                        <button class="value-tab" data-value="vols" title="Value Over Last Starter — how much better this player is than the worst starter at this position across the league. Zero means this player wouldn't start for any team">VOLS</button>
+                    </div>
                     <div id="adp-tabs">
                         <span class="adp-label" title="ADP source used for opponent modeling in VONA calculations">ADP:</span>
                         <button class="adp-tab active" data-adp="consensus" title="FantasyPros consensus ADP (avg of ESPN, Sleeper, CBS, NFL, RTSports, Fantrax)">Consensus</button>
