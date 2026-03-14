@@ -150,3 +150,50 @@ class TestDataFiles:
         assert len(rows) > 100, f"Expected >100 players, got {len(rows)}"
         positions = {r["position_group"] for r in rows}
         assert positions == {"QB", "RB", "WR", "TE", "K", "DST"}
+
+    def test_projections_include_2026_rookies(self):
+        """Key 2026 rookies must appear in projections."""
+        import csv
+        with open("data/projections/all_projections.csv") as f:
+            rows = list(csv.DictReader(f))
+        names = {r["player_display_name"] for r in rows}
+        expected_rookies = [
+            "Jeremiyah Love",
+            "Makai Lemon",
+            "Carnell Tate",
+            "Jordyn Tyson",
+        ]
+        for rookie in expected_rookies:
+            assert rookie in names, f"2026 rookie {rookie} missing from projections"
+
+    @nflreadpy_required
+    def test_no_rookies_in_historical_data(self):
+        """2026 combine rookies must not have NFL stats in 2025 or earlier."""
+        import nflreadpy as nfl
+        import polars as pl
+
+        # Get pfr_ids for known 2026 rookies
+        combine = nfl.load_combine([2026])
+        rookie_pfr_ids = set(
+            combine.filter(pl.col("pfr_id").is_not_null())["pfr_id"].to_list()
+        )
+
+        # Bridge pfr_id -> gsis_id
+        players = nfl.load_players()
+        bridge = (
+            players.filter(pl.col("pfr_id").is_in(list(rookie_pfr_ids)))
+            .select(["gsis_id", "pfr_id"])
+            .drop_nulls(subset=["gsis_id"])
+        )
+        rookie_gsis_ids = set(bridge["gsis_id"].to_list())
+
+        # These gsis_ids should have no player stats in any prior season
+        if rookie_gsis_ids:
+            stats = nfl.load_player_stats(list(range(2020, 2026)))
+            leaked = stats.filter(
+                pl.col("player_id").is_in(list(rookie_gsis_ids))
+            )
+            assert leaked.shape[0] == 0, (
+                f"{leaked.shape[0]} stat rows found for 2026 rookies: "
+                f"{leaked['player_display_name'].unique().to_list()[:5]}"
+            )
