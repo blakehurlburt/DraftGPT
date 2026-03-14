@@ -149,4 +149,4 @@ class TestDataFiles:
             rows = list(reader)
         assert len(rows) > 100, f"Expected >100 players, got {len(rows)}"
         positions = {r["position_group"] for r in rows}
-        assert positions == {"QB", "RB", "WR", "TE"}
+        assert positions == {"QB", "RB", "WR", "TE", "K", "DST"}

@@ -520,7 +520,19 @@ def _add_player_metadata(df, seasons):
         )
         rosters = rosters.drop("birth_date")
 
-    df = df.join(rosters, on=["player_id", "season"], how="left")
+    # Some columns may already exist in df (e.g. years_exp for combine-sourced
+    # rookies). Use suffix join and fill nulls to preserve existing values.
+    roster_data_cols = [c for c in rosters.columns if c not in ("player_id", "season")]
+    overlap_cols = [c for c in roster_data_cols if c in df.columns]
+    if overlap_cols:
+        df = df.join(rosters, on=["player_id", "season"], how="left", suffix="_roster")
+        for c in overlap_cols:
+            df = df.with_columns(
+                pl.col(c).fill_null(pl.col(f"{c}_roster")).alias(c)
+            )
+        df = df.drop([f"{c}_roster" for c in overlap_cols])
+    else:
+        df = df.join(rosters, on=["player_id", "season"], how="left")
 
     return df
 
@@ -552,8 +564,16 @@ def _add_combine_draft_features(df):
         .unique(subset=["pfr_id"])
         .rename({"gsis_id": "player_id"})
     )
-    combine = combine.join(bridge, on="pfr_id", how="inner").drop("pfr_id")
-    print(f"  Combine: {combine.shape[0]} players matched to gsis_id")
+    combine_via_gsis = combine.join(bridge, on="pfr_id", how="inner").drop("pfr_id")
+
+    # Also create a pfr_id-keyed version for rookies whose player_id IS their pfr_id
+    combine_via_pfr = combine.rename({"pfr_id": "player_id"})
+
+    # Stack both mappings, deduplicate (gsis_id takes precedence)
+    combine = pl.concat([combine_via_gsis, combine_via_pfr], how="diagonal").unique(
+        subset=["player_id"], keep="first"
+    )
+    print(f"  Combine: {combine.shape[0]} players matched")
 
     # --- Draft round ---
     draft = nfl.load_draft_picks()
@@ -568,11 +588,22 @@ def _add_combine_draft_features(df):
         draft = draft.with_columns(pl.col("draft_round").cast(pl.Float64, strict=False))
 
     # --- College conference ---
-    conf = (
+    # Via gsis_id for veterans
+    conf_gsis = (
         players.select(["gsis_id", "college_conference"])
         .drop_nulls()
         .unique(subset=["gsis_id"])
         .rename({"gsis_id": "player_id"})
+    )
+    # Via pfr_id for rookies whose player_id is their pfr_id
+    conf_pfr = (
+        players.select(["pfr_id", "college_conference"])
+        .drop_nulls()
+        .unique(subset=["pfr_id"])
+        .rename({"pfr_id": "player_id"})
+    )
+    conf = pl.concat([conf_gsis, conf_pfr], how="diagonal").unique(
+        subset=["player_id"], keep="first"
     )
     # Encode top conferences as integers, rest as 0
     top_conferences = {
@@ -590,10 +621,36 @@ def _add_combine_draft_features(df):
         .alias("college_conf_code")
     ).drop("college_conference")
 
+    # --- College production features (from CFBD cache) ---
+    from nfldata.college_features import build_college_features
+    all_combine = nfl.load_combine()
+    college_feats = build_college_features(all_combine)
+    if college_feats.shape[0] > 0 and "pfr_id" in college_feats.columns:
+        college_cols = [c for c in college_feats.columns if c != "pfr_id"]
+        if college_cols:
+            # Bridge via gsis_id for veterans
+            college_via_gsis = college_feats.join(
+                bridge.rename({"player_id": "_pid"}),
+                on="pfr_id", how="inner"
+            ).drop("pfr_id").rename({"_pid": "player_id"})
+            # Direct pfr_id path for rookies
+            college_via_pfr = college_feats.rename({"pfr_id": "player_id"})
+            college_all = pl.concat(
+                [college_via_gsis, college_via_pfr], how="diagonal"
+            ).unique(subset=["player_id"], keep="first")
+            print(f"  College features: {college_all.shape[0]} players, {len(college_cols)} features")
+        else:
+            college_all = None
+    else:
+        college_all = None
+        print("  College features: no cached CFBD data (run scripts/fetch_college_stats.py)")
+
     # --- Join all to main df ---
     df = df.join(combine, on="player_id", how="left")
     df = df.join(draft, on="player_id", how="left")
     df = df.join(conf, on="player_id", how="left")
+    if college_all is not None:
+        df = df.join(college_all, on="player_id", how="left")
 
     # --- is_rookie flag ---
     if "years_exp" in df.columns:

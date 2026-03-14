@@ -98,7 +98,7 @@ class TestPlayer:
     def test_load_players(self, real_players):
         assert len(real_players) > 100
         positions = {p.position for p in real_players}
-        assert positions == {"QB", "RB", "WR", "TE"}
+        assert positions == {"QB", "RB", "WR", "TE", "K", "DST"}
         # Sorted descending by projected_total
         totals = [p.projected_total for p in real_players]
         assert totals == sorted(totals, reverse=True)

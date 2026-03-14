@@ -319,49 +319,43 @@ def _build_projection_features(seasons, rosters=None):
             pl.col("team").fill_null(pl.col("_fallback_team"))
         ).drop("_fallback_team")
 
-    # --- Add rookie rows from draft picks for the projection year ---
+    # --- Add rookie rows from combine data for the projection year ---
+    # Use combine data instead of draft picks so we can project rookies
+    # before the draft happens. Rookies use pfr_id as player_id since
+    # they don't have a gsis_id yet.
     proj_year = max_season + 1
     try:
-        draft_picks = nfl.load_draft_picks([proj_year])
+        combine = nfl.load_combine([proj_year])
         # Filter to offensive skill positions
         skill_positions = {"QB", "RB", "WR", "TE", "HB", "FB"}
-        draft_picks = draft_picks.filter(
-            pl.col("position").is_in(skill_positions)
-            | pl.col("category").str.contains("(?i)offense")
-        )
-        draft_picks = draft_picks.filter(pl.col("gsis_id").is_not_null())
+        combine = combine.filter(pl.col("pos").is_in(skill_positions))
+        combine = combine.filter(pl.col("pfr_id").is_not_null())
 
-        # Map draft position to our position_group
+        # Map combine position to our position_group
         pos_map = {"QB": "QB", "RB": "RB", "HB": "RB", "FB": "RB", "WR": "WR", "TE": "TE"}
-        draft_picks = draft_picks.with_columns(
-            pl.col("position").replace_strict(pos_map, default=None).alias("position_group")
+        combine = combine.with_columns(
+            pl.col("pos").replace_strict(pos_map, default=None).alias("position_group")
         ).filter(pl.col("position_group").is_not_null())
 
-        # Get display names from load_players()
-        players_df = nfl.load_players()
-        name_map = (
-            players_df.select(["gsis_id", "display_name"])
-            .drop_nulls()
-            .unique(subset=["gsis_id"])
-        )
-        rookie_rows = (
-            draft_picks.select([
-                pl.col("gsis_id").alias("player_id"),
-                pl.lit(proj_year).alias("season"),
-                pl.col("team"),
-                pl.col("position_group"),
-            ])
-            .join(name_map.rename({"gsis_id": "player_id", "display_name": "player_display_name"}),
-                  on="player_id", how="left")
-        )
+        # Use pfr_id as player_id for rookies (no gsis_id available pre-draft)
+        # Team is null (unknown until draft) — XGBoost handles nulls natively
+        # Set years_exp=0 so downstream is_rookie detection works
+        rookie_rows = combine.select([
+            pl.col("pfr_id").alias("player_id"),
+            pl.lit(proj_year).alias("season"),
+            pl.lit(None).cast(pl.Utf8).alias("team"),
+            pl.col("position_group"),
+            pl.col("player_name").alias("player_display_name"),
+            pl.lit(0).alias("years_exp"),
+        ])
 
         # Exclude any rookies already in the dataset (shouldn't happen, but safety check)
         existing_ids = set(season_df["player_id"].unique().to_list())
         rookie_rows = rookie_rows.filter(~pl.col("player_id").is_in(list(existing_ids)))
 
-        print(f"  Adding {rookie_rows.shape[0]} rookies from {proj_year} draft")
+        print(f"  Adding {rookie_rows.shape[0]} rookies from {proj_year} combine data")
     except Exception as e:
-        print(f"  No {proj_year} draft data available ({e}), skipping rookies")
+        print(f"  No {proj_year} combine data available ({e}), skipping rookies")
         rookie_rows = None
 
     # Append dummy rows (and rookies) and rebuild prior features
@@ -392,41 +386,50 @@ def _build_projection_features(seasons, rosters=None):
     # Fill from the most recent season's roster data for each player.
     meta_cols = ["years_exp", "height", "weight", "draft_number", "age"]
     available_meta = [c for c in meta_cols if c in proj.columns]
-    missing_meta = proj.select("player_id").join(
+    prior_meta = (
         extended.filter(pl.col("season") == max_season)
         .select(["player_id"] + available_meta)
-        .unique(subset=["player_id"]),
-        on="player_id",
-        how="left",
+        .unique(subset=["player_id"])
     )
     # Bump years_exp and age by 1 for the projection season
-    if "years_exp" in missing_meta.columns:
-        missing_meta = missing_meta.with_columns(
+    if "years_exp" in prior_meta.columns:
+        prior_meta = prior_meta.with_columns(
             (pl.col("years_exp") + 1).alias("years_exp")
         )
-    if "age" in missing_meta.columns:
-        missing_meta = missing_meta.with_columns(
+    if "age" in prior_meta.columns:
+        prior_meta = prior_meta.with_columns(
             (pl.col("age") + 1.0).alias("age")
         )
-    # Overwrite the null metadata columns
-    proj = proj.drop(available_meta).join(missing_meta, on="player_id", how="left")
+    # Rename to avoid collision, then fill nulls from prior season
+    rename_map = {c: f"_meta_{c}" for c in available_meta}
+    prior_meta = prior_meta.rename(rename_map)
+    proj = proj.join(prior_meta, on="player_id", how="left")
+    for c in available_meta:
+        proj = proj.with_columns(
+            pl.col(c).fill_null(pl.col(f"_meta_{c}")).alias(c)
+        )
+    proj = proj.drop([f"_meta_{c}" for c in available_meta])
 
-    # For rookies, fill metadata from load_players() since they have no prior roster entry
+    # For rookies, fill metadata from combine data since they have no prior roster entry
     if rookie_rows is not None and rookie_rows.shape[0] > 0:
-        players_meta = nfl.load_players()
+        combine_meta = nfl.load_combine([proj_year])
+        # Parse height from "6-2" format to inches (float)
+        combine_meta = combine_meta.with_columns(
+            pl.col("ht").str.split("-").map_elements(
+                lambda parts: float(parts[0]) * 12 + float(parts[1]) if len(parts) == 2 else None,
+                return_dtype=pl.Float64,
+            ).alias("height_inches")
+        )
         rookie_meta = (
-            players_meta.select(["gsis_id", "height", "weight"])
-            .drop_nulls(subset=["gsis_id"])
-            .unique(subset=["gsis_id"])
-            .rename({"gsis_id": "player_id"})
+            combine_meta.select(["pfr_id", "height_inches", "wt"])
+            .drop_nulls(subset=["pfr_id"])
+            .unique(subset=["pfr_id"])
+            .rename({"pfr_id": "player_id", "height_inches": "_rk_height", "wt": "_rk_weight"})
         )
-        if "height" in rookie_meta.columns and rookie_meta["height"].dtype != pl.Float64:
-            rookie_meta = rookie_meta.with_columns(pl.col("height").cast(pl.Float64, strict=False))
+        if rookie_meta["_rk_weight"].dtype != pl.Float64:
+            rookie_meta = rookie_meta.with_columns(pl.col("_rk_weight").cast(pl.Float64, strict=False))
         # Fill nulls for rookies only
-        proj = proj.join(
-            rookie_meta.rename({"height": "_rk_height", "weight": "_rk_weight"}),
-            on="player_id", how="left"
-        )
+        proj = proj.join(rookie_meta, on="player_id", how="left")
         proj = proj.with_columns([
             pl.col("height").fill_null(pl.col("_rk_height")),
             pl.col("weight").fill_null(pl.col("_rk_weight")),
