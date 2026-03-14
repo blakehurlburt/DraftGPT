@@ -64,17 +64,20 @@ def load_players(
             position = row["position_group"]
             if position not in ("QB", "RB", "WR", "TE", "K", "DST"):
                 continue
+            raw_team = row.get("current_team", "") or ""
+            team = _TEAM_NORMALIZE.get(raw_team, raw_team)
             players.append(
                 Player(
                     name=row["player_display_name"],
                     position=position,
-                    team=_TEAM_NORMALIZE.get(row.get("current_team", ""), row.get("current_team", "")),
+                    team=team,
                     projected_ppg=float(row["projected_ppg"]),
                     projected_games=float(row["projected_games"]),
                     projected_total=total,
                     pos_rank=int(row["pos_rank"]),
                     total_floor=float(row.get("total_floor", 0)),
                     total_ceiling=float(row.get("total_ceiling", 0)),
+                    is_rookie=not raw_team,  # combine-sourced rookies have no team
                 )
             )
 
