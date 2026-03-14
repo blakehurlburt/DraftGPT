@@ -590,8 +590,19 @@
             });
         });
 
+        // When rookieOnly is active, merge available_rookies from state
+        // so rookies appear even if they didn't rank in strategy-scored recs
+        let pool = allRecs;
+        if (rookieOnly && currentState?.available_rookies) {
+            const recNames = new Set(allRecs.map((r) => r.name));
+            const extras = currentState.available_rookies
+                .filter((r) => !recNames.has(r.name))
+                .map((r, i) => ({ ...r, rank: allRecs.length + i + 1 }));
+            pool = [...allRecs, ...extras];
+        }
+
         // Apply position filter first, then cap to displayCount
-        let filtered = allRecs.filter((r) => posFilters.has(r.position) && (!rookieOnly || r.is_rookie));
+        let filtered = pool.filter((r) => posFilters.has(r.position) && (!rookieOnly || r.is_rookie));
 
         // Apply sort
         if (currentSort === "adp") {

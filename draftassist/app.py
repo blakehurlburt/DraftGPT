@@ -263,6 +263,24 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
     # Team needs
     needs = state.team_needs(user_slot) if user_slot < config.num_teams else {}
 
+    # Available rookies — surfaced separately so the UI can show them
+    # when the Rookies filter is active, even if they don't rank in the
+    # strategy-scored top-N recommendations
+    available_rookies = []
+    for p in sorted(state.available, key=lambda p: p.projected_total, reverse=True):
+        if p.is_rookie:
+            available_rookies.append({
+                "name": p.name,
+                "position": p.position,
+                "team": p.team,
+                "projected_total": round(p.projected_total, 1),
+                "total_floor": round(p.total_floor, 1),
+                "total_ceiling": round(p.total_ceiling, 1),
+                "bye_week": p.bye_week,
+                "is_rookie": True,
+                "adp": adp_rank.get(p.name, 999),
+            })
+
     return {
         "current_pick": current_pick,
         "total_picks": config.total_picks,
@@ -281,6 +299,7 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
         "user_roster": user_roster,
         "team_needs": needs,
         "draft_status": meta.get("status", "unknown"),
+        "available_rookies": available_rookies,
     }
 
 

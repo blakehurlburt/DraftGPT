@@ -308,3 +308,54 @@ class TestGetRecommendations:
         assert len(recs) == 5
         for r in recs:
             assert r.player.projected_total > 0
+
+
+# ---------------------------------------------------------------------------
+# Rookies in recommendations / state payload
+# ---------------------------------------------------------------------------
+
+class TestRookiesInPayload:
+    """Rookies must be surfaced in the UI even when they rank below the
+    strategy-scored recommendation cutoff."""
+
+    def test_real_players_have_rookies(self, real_players):
+        """Projections CSV must include rookie players."""
+        rookies = [p for p in real_players if p.is_rookie]
+        assert len(rookies) >= 10, (
+            f"Expected >=10 rookies in projections, got {len(rookies)}"
+        )
+
+    def test_rookies_in_available_pool(self, real_players):
+        """Rookies must be in DraftState.available at draft start."""
+        config = LeagueConfig()
+        state = DraftState.create(config, real_players)
+        available_rookies = [p for p in state.available if p.is_rookie]
+        assert len(available_rookies) >= 10, (
+            f"Expected >=10 rookies in available pool, got {len(available_rookies)}"
+        )
+
+    def test_payload_includes_available_rookies(self, real_players):
+        """State payload must include available_rookies list so the UI
+        can show them when the Rookies filter is active, even if they
+        don't appear in strategy-ranked recommendations."""
+        from draftassist.app import _build_state_payload
+
+        config = LeagueConfig()
+        state = DraftState.create(config, real_players)
+        payload = _build_state_payload(
+            state, {"status": "drafting"}, [], user_slot=0,
+            players=real_players, skip_recommendations=False,
+        )
+        assert "available_rookies" in payload, (
+            "Payload missing 'available_rookies' key"
+        )
+        rookies = payload["available_rookies"]
+        assert len(rookies) >= 10, (
+            f"Expected >=10 available_rookies, got {len(rookies)}"
+        )
+        # Each rookie entry must have the fields the UI needs
+        for r in rookies[:3]:
+            assert "name" in r
+            assert "position" in r
+            assert "projected_total" in r
+            assert "is_rookie" in r and r["is_rookie"] is True
