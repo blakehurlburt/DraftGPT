@@ -283,11 +283,13 @@ def attach_sleeper_projections(
 
         # Estimate games from Sleeper stats or fall back to model
         games = float(stats.get("gp", 0) or stats.get("games", 0) or 0)
+        games_known = games > 0 or p.projected_games > 0
         if games <= 0:
+            # Use model value if available; fall back to 17 only for PPG math
             games = p.projected_games if p.projected_games > 0 else 17.0
 
         p.sleeper_projected_total = pts
-        p.sleeper_projected_games = games
+        p.sleeper_projected_games = games if games_known else 0.0
         p.sleeper_projected_ppg = pts / games if games > 0 else 0.0
         matched += 1
 
