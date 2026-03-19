@@ -1108,6 +1108,23 @@ td.sim-value {
 .pos-SP { background: #f44336; color: white; }
 .pos-RP { background: #795548; color: white; }
 
+/* Draft button in recommendation rows (manual mode) */
+.draft-col { text-align: center; padding: 2px 4px; }
+.draft-btn {
+    background: #1a3a2a;
+    color: #66bb6a;
+    border: 1px solid #2e5e3e;
+    border-radius: 4px;
+    padding: 3px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.draft-btn:hover {
+    background: #2e5e3e;
+    border-color: #66bb6a;
+}
+
 /* Responsive */
 @media (max-width: 900px) {
     main { flex-direction: column; }

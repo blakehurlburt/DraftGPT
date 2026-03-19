@@ -450,6 +450,15 @@
             },
             tdClass: "sim-value",
         },
+        {
+            key: "draft", label: "",
+            hidden: () => draftMode !== "manual",
+            render: (r) => {
+                const escaped = r.name.replace(/"/g, '&quot;');
+                return `<button class="draft-btn" data-name="${escaped}">Draft</button>`;
+            },
+            tdClass: "draft-col",
+        },
     ];
 
     const ROSTER_COLUMNS = [
@@ -970,8 +979,8 @@
         renderBoard(state);
         renderSimInsights(simData);
 
-        // Prefetch more recs in background when it's our turn
-        if (state.is_my_turn && !Object.keys(prefetchedRecs).length) {
+        // Prefetch more recs in background
+        if (!state.is_complete && !Object.keys(prefetchedRecs).length) {
             prefetchMore();
         }
     }
@@ -1027,7 +1036,7 @@
 
         if (!filtered.length) {
             const msg = !allRecs.length
-                ? (state.is_my_turn ? "No recommendations available" : "Recommendations appear on your turn")
+                ? "No recommendations available"
                 : "No players match current filters";
             recBody.innerHTML =
                 `<tr><td colspan="${colSpan}" class="empty-msg">${msg}</td></tr>`;
@@ -1039,9 +1048,13 @@
             .map((r) => renderTableRow(REC_COLUMNS, r, ctx))
             .join("");
 
-        // Show "show more" button when it's our turn and there are more to show
-        // (or backend may still have more data for this filter)
-        if (state.is_my_turn && (hasMore || !backendExhausted)) {
+        // Bind draft buttons (manual mode only)
+        recBody.querySelectorAll(".draft-btn").forEach((btn) => {
+            btn.addEventListener("click", () => makePick(btn.dataset.name));
+        });
+
+        // Show "show more" button when there are more to show
+        if (!state.is_complete && (hasMore || !backendExhausted)) {
             showMoreBtn.classList.remove("hidden");
             showMoreBtn.textContent = `Show ${displayCount} more`;
         } else {
