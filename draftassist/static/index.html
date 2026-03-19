@@ -53,13 +53,17 @@
     <!-- Compact header (post-connect) -->
     <header id="connection-bar" class="hidden">
         <h1>Draft Assistant</h1>
-        <div class="connect-info">
+        <div id="sleeper-connect-info" class="connect-info">
             <label class="connect-info-label">Draft</label>
             <input type="text" id="header-draft-id" class="header-input header-input-draft">
             <label class="connect-info-label">Slot</label>
             <input type="number" id="header-slot" class="header-input header-input-slot" min="1" max="20">
             <span id="header-teams"></span>
             <button id="header-connect-btn" class="header-connect-btn">Connect</button>
+        </div>
+        <div id="manual-connect-info" class="connect-info hidden">
+            <span id="header-manual-label" class="header-manual-label">Manual Draft</span>
+            <span id="header-teams-manual"></span>
         </div>
     </header>
 

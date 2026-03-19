@@ -11,6 +11,8 @@ body {
     min-height: 100vh;
 }
 
+.hidden { display: none !important; }
+
 /* Welcome Screen */
 #welcome-screen {
     display: flex;
@@ -236,6 +238,12 @@ body {
 
 .header-connect-btn:hover {
     background: #81d4fa;
+}
+
+.header-manual-label {
+    font-size: 14px;
+    color: #4fc3f7;
+    font-weight: 600;
 }
 
 /* Status Bar */

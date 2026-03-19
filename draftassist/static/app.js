@@ -700,15 +700,27 @@
 
         welcomeScreen.classList.add("hidden");
         connectionBar.classList.remove("hidden");
-        headerDraftId.value = draftId;
-        headerSlot.value = slot;
-        headerTeams.textContent = data ? `${data.num_teams} teams` : "";
         statusBar.classList.remove("hidden");
         mainContent.classList.remove("hidden");
 
-        // Show manual pick controls if manual mode
+        const sleeperInfo = $("#sleeper-connect-info");
+        const manualInfo = $("#manual-connect-info");
+
         if (draftMode === "manual") {
+            // Hide Sleeper header, show manual header
+            sleeperInfo.classList.add("hidden");
+            manualInfo.classList.remove("hidden");
+            const sportLabel = draftSport === "mlb" ? "MLB" : "NFL";
+            const teamsText = data ? `${data.num_teams} teams, ${data.rounds} rounds, slot ${slot}` : "";
+            $("#header-manual-label").textContent = `Manual ${sportLabel} Draft`;
+            $("#header-teams-manual").textContent = teamsText;
             manualPickControls.classList.remove("hidden");
+        } else {
+            sleeperInfo.classList.remove("hidden");
+            manualInfo.classList.add("hidden");
+            headerDraftId.value = draftId;
+            headerSlot.value = slot;
+            headerTeams.textContent = data ? `${data.num_teams} teams` : "";
         }
     }
 
