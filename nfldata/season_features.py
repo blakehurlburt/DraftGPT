@@ -894,85 +894,176 @@ def _add_roster_context_features(df, seasons):
     return df
 
 
-def _load_starter_set(seasons):
-    """Load depth charts to identify starters (depth_team='1').
+def _backfill_projection_metadata(df, projection_year, rookie_rows):
+    """Fill metadata gaps for projection-year rows.
 
-    Returns a set of (player_id, season) tuples for players who appeared
-    as a first-team starter at any point during the season.
+    Projection rows (season == projection_year) have no roster metadata because
+    the season hasn't happened yet.  Fill years_exp, height, weight, age from
+    the player's most-recent historical row, bumping years_exp +1 and age +1.
+    For rookies, fill height/weight from combine data.
     """
-    season_list = list(seasons)
-    print("Loading depth charts...")
-    try:
-        dc = nfl.load_depth_charts(season_list)
-    except Exception as e:
-        print(f"  Warning: Failed to load depth charts: {e}")
-        return set()
+    max_season = projection_year - 1
 
-    # Filter to offensive skill positions, first team
-    starters = dc.filter(
-        (pl.col("depth_team") == "1")
-        & pl.col("position").is_in(["QB", "RB", "WR", "TE"])
+    meta_cols = ["years_exp", "height", "weight", "draft_number", "age"]
+    available_meta = [c for c in meta_cols if c in df.columns]
+
+    # Pull metadata from the prior season for each player
+    prior_meta = (
+        df.filter(pl.col("season") == max_season)
+        .select(["player_id"] + available_meta)
+        .unique(subset=["player_id"])
     )
+    if "years_exp" in prior_meta.columns:
+        prior_meta = prior_meta.with_columns((pl.col("years_exp") + 1).alias("years_exp"))
+    if "age" in prior_meta.columns:
+        prior_meta = prior_meta.with_columns((pl.col("age") + 1.0).alias("age"))
 
-    # Build set of (gsis_id, season) — player was a starter at any point
-    starter_pairs = set()
-    if "gsis_id" in starters.columns:
-        pairs = (
-            starters.select(["gsis_id", "season"])
-            .unique()
-            .rename({"gsis_id": "player_id"})
-        )
-        for row in pairs.iter_rows():
-            starter_pairs.add((row[0], row[1]))
+    rename_map = {c: f"_meta_{c}" for c in available_meta}
+    prior_meta = prior_meta.rename(rename_map)
+    df = df.join(prior_meta, on="player_id", how="left")
+    for c in available_meta:
+        if f"_meta_{c}" in df.columns:
+            df = df.with_columns(
+                pl.col(c).fill_null(pl.col(f"_meta_{c}")).alias(c)
+            )
+    df = df.drop([f"_meta_{c}" for c in available_meta if f"_meta_{c}" in df.columns])
 
-    print(f"  Identified {len(starter_pairs)} player-season starter entries")
-    return starter_pairs
+    # For rookies, fill height/weight from combine data
+    if rookie_rows is not None and rookie_rows.shape[0] > 0:
+        try:
+            combine_meta = nfl.load_combine([projection_year])
+            combine_meta = combine_meta.with_columns(
+                pl.col("ht").str.split("-").map_elements(
+                    lambda parts: float(parts[0]) * 12 + float(parts[1]) if len(parts) == 2 else None,
+                    return_dtype=pl.Float64,
+                ).alias("height_inches")
+            )
+            rk_meta = (
+                combine_meta.select(["pfr_id", "height_inches", "wt"])
+                .drop_nulls(subset=["pfr_id"])
+                .unique(subset=["pfr_id"])
+                .rename({"pfr_id": "player_id", "height_inches": "_rk_height", "wt": "_rk_weight"})
+            )
+            if rk_meta["_rk_weight"].dtype != pl.Float64:
+                rk_meta = rk_meta.with_columns(pl.col("_rk_weight").cast(pl.Float64, strict=False))
+            df = df.join(rk_meta, on="player_id", how="left")
+            if "height" in df.columns and "_rk_height" in df.columns:
+                df = df.with_columns(pl.col("height").fill_null(pl.col("_rk_height")))
+            if "weight" in df.columns and "_rk_weight" in df.columns:
+                df = df.with_columns(pl.col("weight").fill_null(pl.col("_rk_weight")))
+            df = df.drop([c for c in ["_rk_height", "_rk_weight"] if c in df.columns])
+        except Exception as e:
+            print(f"  Warning: Could not load combine metadata for rookies: {e}")
+
+        # Set years_exp = 0 for rookies
+        if "years_exp" in df.columns and "is_rookie" in df.columns:
+            df = df.with_columns(
+                pl.when(pl.col("is_rookie") == 1.0)
+                .then(0)
+                .otherwise(pl.col("years_exp"))
+                .alias("years_exp")
+            )
+
+    return df
 
 
-# Minimum games to keep a non-starter in the dataset
-_MIN_GAMES_NON_STARTER = 6
+def _build_rookie_rows(projection_year, season_df):
+    """Create projection rows for rookies from combine data.
+
+    Uses pfr_id as player_id since rookies don't have a gsis_id yet.
+    Returns a small DataFrame with player_id, season, team, position_group,
+    player_display_name, and years_exp=0, or None if no combine data.
+    """
+    try:
+        combine = nfl.load_combine([projection_year])
+        skill_positions = {"QB", "RB", "WR", "TE", "HB", "FB"}
+        combine = combine.filter(pl.col("pos").is_in(skill_positions))
+        combine = combine.filter(pl.col("pfr_id").is_not_null())
+
+        pos_map = {"QB": "QB", "RB": "RB", "HB": "RB", "FB": "RB", "WR": "WR", "TE": "TE"}
+        combine = combine.with_columns(
+            pl.col("pos").replace_strict(pos_map, default=None).alias("position_group")
+        ).filter(pl.col("position_group").is_not_null())
+
+        rookie_rows = combine.select([
+            pl.col("pfr_id").alias("player_id"),
+            pl.lit(projection_year).alias("season"),
+            pl.lit(None).cast(pl.Utf8).alias("team"),
+            pl.col("position_group"),
+            pl.col("player_name").alias("player_display_name"),
+            pl.lit(0).alias("years_exp"),
+        ])
+
+        existing_ids = set(season_df["player_id"].unique().to_list())
+        rookie_rows = rookie_rows.filter(~pl.col("player_id").is_in(list(existing_ids)))
+        print(f"  Adding {rookie_rows.shape[0]} rookies from {projection_year} combine data")
+        return rookie_rows
+    except Exception as e:
+        print(f"  No {projection_year} combine data available ({e}), skipping rookies")
+        return None
 
 
-def build_season_features(seasons):
+def build_season_features(seasons, *, projection_year=None, rosters=None):
     """Build the full season-level feature matrix.
 
     Args:
         seasons: Iterable of season years (e.g., range(2018, 2025)).
+        projection_year: If set, also produce projection rows for this year
+            using the most recent season as prior features. Rookies are sourced
+            from combine data and team assignments from *rosters*.
+        rosters: Optional Polars DataFrame with player_id + current_team columns.
+            Used to override team assignments for projection rows so that
+            changed_team is detected correctly.
 
     Returns:
         Polars DataFrame with one row per player-season, containing
-        prior-season features and target columns. Only includes seasons
-        where prior-season data exists (drops rookies and first appearances).
-
-    Filters out fringe/depth players to improve games-played predictions.
-    A player-season is kept if EITHER:
-      - The player was listed as a depth_team='1' starter that season, OR
-      - The player played 6+ games that season (meaningful contributor)
+        prior-season features and target columns. When *projection_year* is
+        set, the result also contains projection rows (with dummy targets).
     """
     print("=== Building Season-Level Features ===")
 
     # Step 1: Aggregate to season level
     season_df = _aggregate_to_season(seasons)
 
-    # Step 1b: Filter to starters and meaningful contributors
-    starter_set = _load_starter_set(seasons)
-    if starter_set:
-        before = season_df.shape[0]
-        # Tag each row as starter or not
-        season_df = season_df.with_columns(
-            pl.struct(["player_id", "season"])
-            .map_elements(
-                lambda row: (row["player_id"], row["season"]) in starter_set,
-                return_dtype=pl.Boolean,
+    # Step 1b: Add projection rows if requested
+    rookie_rows = None
+    if projection_year is not None:
+        max_season = season_df["season"].max()
+        proj_year = projection_year
+        print(f"  Projecting from {max_season} season data → {proj_year}")
+
+        # Dummy rows: copy latest-season players into projection year with null stats
+        players_latest = season_df.filter(pl.col("season") == max_season)
+        dummy = players_latest.with_columns(pl.lit(proj_year).alias("season"))
+        id_cols = {"player_id", "season", "player_display_name", "position_group", "team"}
+        stat_cols = [c for c in dummy.columns if c not in id_cols]
+        dummy = dummy.with_columns(
+            [pl.lit(None).cast(dummy[c].dtype).alias(c) for c in stat_cols]
+        )
+
+        # Override team from rosters for the projection year
+        if rosters is not None and "current_team" in rosters.columns:
+            dummy = dummy.drop("team").join(
+                rosters.select(["player_id", pl.col("current_team").alias("team")]),
+                on="player_id",
+                how="left",
             )
-            .alias("_is_starter")
-        )
-        # Keep: starters OR players with 6+ games
-        season_df = season_df.filter(
-            pl.col("_is_starter") | (pl.col("games_played") >= _MIN_GAMES_NON_STARTER)
-        )
-        season_df = season_df.drop("_is_starter")
-        print(f"  After starter/contributor filter: {season_df.shape[0]} rows (was {before})")
+            fallback = players_latest.select(
+                ["player_id", pl.col("team").alias("_fallback_team")]
+            )
+            dummy = dummy.join(fallback, on="player_id", how="left")
+            dummy = dummy.with_columns(
+                pl.col("team").fill_null(pl.col("_fallback_team"))
+            ).drop("_fallback_team")
+
+        # Rookie rows from combine data
+        rookie_rows = _build_rookie_rows(proj_year, season_df)
+
+        parts = [season_df, dummy]
+        if rookie_rows is not None and rookie_rows.shape[0] > 0:
+            parts.append(rookie_rows)
+        season_df = pl.concat(parts, how="diagonal")
+        season_df = season_df.sort(["player_id", "season"])
 
     # Step 2: Build prior-season features
     print("Building prior-season features...")
@@ -990,12 +1081,27 @@ def build_season_features(seasons):
     # Step 5: Add roster context features
     df = _add_roster_context_features(df, seasons)
 
+    # Step 5b: Metadata backfill for projection rows
+    if projection_year is not None:
+        df = _backfill_projection_metadata(df, projection_year, rookie_rows)
+
     # Step 6: Define targets
     df = df.with_columns([
         pl.col("ppg").alias("target_ppg"),
         pl.col("games_played").alias("target_games"),
         (pl.col("ppg") * pl.col("games_played")).alias("target_total"),
     ])
+
+    # Projection rows get dummy targets
+    if projection_year is not None:
+        df = df.with_columns([
+            pl.when(pl.col("season") == projection_year)
+            .then(0.0).otherwise(pl.col("target_ppg")).alias("target_ppg"),
+            pl.when(pl.col("season") == projection_year)
+            .then(0.0).otherwise(pl.col("target_games")).alias("target_games"),
+            pl.when(pl.col("season") == projection_year)
+            .then(0.0).otherwise(pl.col("target_total")).alias("target_total"),
+        ])
 
     # Keep rows with prior-season data OR rookies (who have combine/draft features instead)
     df = df.filter(
@@ -1006,9 +1112,15 @@ def build_season_features(seasons):
     # Drop seasons before 2011 as targets (need 2 prior seasons for lookback)
     df = df.filter(pl.col("season") >= 2011)
 
-    # Define feature columns (everything that's not an ID, target, or raw current-season stat)
+    # Add manual adjustments from rosters if available
+    if projection_year is not None and rosters is not None and "adjustment_ppg" in rosters.columns:
+        adj = rosters.select(["player_id", "adjustment_ppg"])
+        df = df.join(adj, on="player_id", how="left")
+    if "adjustment_ppg" not in df.columns:
+        df = df.with_columns(pl.lit(0.0).alias("adjustment_ppg"))
+
     print(f"  Final dataset: {df.shape[0]} rows, {df.shape[1]} cols")
-    print(f"  Seasons with targets: {sorted(df['season'].unique().to_list())}")
+    print(f"  Seasons: {sorted(df['season'].unique().to_list())}")
 
     return df
 

@@ -47,32 +47,8 @@ def get_current_rosters():
 
 
 def main():
-    # Step 1: Build season features including 2025 (which becomes prior-season data for 2026)
-    # We include 2026 in the range so that players with 2025 data get a "2026 row"
-    # with prior-season features from 2025. But 2026 actuals won't exist yet.
-    print("Building season features (2010-2025)...")
-    df = build_season_features(range(2009, 2026))
-
-    # Step 2: Run walk-forward eval first to see model quality
-    print("\n--- Walk-Forward Evaluation (for reference) ---")
-    from nfldata.season_model import walk_forward_eval
-    walk_forward_eval(df)
-
-    # Step 3: Train final model on all available data
-    print("\n--- Training Final Model ---")
-    ppg_model, games_model, importance, quantile_models = train_final_model(df)
-
-    # Step 4: Build projection features for 2026
-    # Players who played in 2025 will have prior-season features.
-    # We need to create "2026 rows" with 2025 as the prior season.
-    # The easiest way: rebuild features including a synthetic 2026 entry.
-    # But since build_season_features only looks at actual data, we need
-    # the 2025 season rows with their prior-season features already computed.
-    # The "2025 target rows" in df already have prior1_* features from 2024.
-    # We need features where 2025 IS the prior season.
-
-    # Step 5: Get current rosters (needed before projection features for team override)
-    print("\nLoading current rosters...")
+    # Step 1: Get current rosters (needed for projection features)
+    print("Loading current rosters...")
     rosters = get_current_rosters()
 
     # Load adjustment_ppg from rosters.csv if available
@@ -85,9 +61,22 @@ def main():
             ]).filter(pl.col("player_id").is_not_null())
             rosters = rosters.join(adj_df, on="player_id", how="left")
 
-    # Rebuild with 2025 as the most recent season to project from
-    print("\nBuilding projection features...")
-    proj_df = _build_projection_features(range(2009, 2026), rosters=rosters)
+    # Step 2: Build unified feature matrix (training + projection in one pass)
+    print("\nBuilding season features (2009-2025 + 2026 projection)...")
+    full_df = build_season_features(range(2009, 2026), projection_year=2026, rosters=rosters)
+
+    # Split into training and projection sets
+    df = full_df.filter(pl.col("season") < 2026)
+    proj_df = full_df.filter(pl.col("season") == 2026)
+
+    # Step 3: Run walk-forward eval on training data
+    print("\n--- Walk-Forward Evaluation (for reference) ---")
+    from nfldata.season_model import walk_forward_eval
+    walk_forward_eval(df)
+
+    # Step 4: Train final model on all available training data
+    print("\n--- Training Final Model ---")
+    ppg_model, games_model, importance, quantile_models = train_final_model(df)
 
     # Step 6: Project (with floor/median/ceiling)
     results = project_season(ppg_model, games_model, proj_df, quantile_models=quantile_models)
@@ -265,199 +254,6 @@ def _write_projection_csvs(results, k_results=None, dst_results=None):
     path = OUTPUT_DIR / "all_projections.csv"
     all_df.write_csv(path)
     print(f"  Wrote {all_df.shape[0]} total players to {path}")
-
-
-def _build_projection_features(seasons, rosters=None):
-    """Build feature rows for next-season projection.
-
-    Creates one row per player using their most recent season as
-    the "prior" season. These rows have prior-season features filled
-    but no targets (since the season hasn't happened yet).
-
-    Args:
-        seasons: Iterable of season years for historical data.
-        rosters: Optional roster DataFrame with player_id, current_team,
-                 and adjustment_ppg columns. Used to set the projection
-                 year's team assignment so changed_team is detected correctly.
-    """
-    import nflreadpy as nfl
-    from nfldata.season_features import (
-        _aggregate_to_season, _add_injury_features, _add_player_metadata,
-        _add_roster_context_features, _build_prior_features,
-        _add_combine_draft_features,
-    )
-
-    # Get season-level aggregates
-    season_df = _aggregate_to_season(seasons)
-
-    # For projection, we want each player's LAST season to become their prior features
-    max_season = season_df["season"].max()
-    print(f"  Projecting from {max_season} season data")
-
-    # Create dummy rows for max_season + 1
-    players_latest = season_df.filter(pl.col("season") == max_season)
-    dummy = players_latest.with_columns(pl.lit(max_season + 1).alias("season"))
-
-    # Set current-season stats to null (they're targets we don't have)
-    # Keep id cols and team (team will be overridden from rosters if available)
-    id_cols = {"player_id", "season", "player_display_name", "position_group", "team"}
-    stat_cols = [c for c in dummy.columns if c not in id_cols]
-    dummy = dummy.with_columns([pl.lit(None).cast(dummy[c].dtype).alias(c) for c in stat_cols])
-
-    # Override team from current rosters for the projection year
-    # This ensures changed_team is correctly detected for players who moved
-    if rosters is not None and "current_team" in rosters.columns:
-        dummy = dummy.drop("team").join(
-            rosters.select(["player_id", pl.col("current_team").alias("team")]),
-            on="player_id",
-            how="left",
-        )
-        # Fall back to last season's team if roster doesn't have this player
-        fallback = players_latest.select(["player_id", pl.col("team").alias("_fallback_team")])
-        dummy = dummy.join(fallback, on="player_id", how="left")
-        dummy = dummy.with_columns(
-            pl.col("team").fill_null(pl.col("_fallback_team"))
-        ).drop("_fallback_team")
-
-    # --- Add rookie rows from combine data for the projection year ---
-    # Use combine data instead of draft picks so we can project rookies
-    # before the draft happens. Rookies use pfr_id as player_id since
-    # they don't have a gsis_id yet.
-    proj_year = max_season + 1
-    try:
-        combine = nfl.load_combine([proj_year])
-        # Filter to offensive skill positions
-        skill_positions = {"QB", "RB", "WR", "TE", "HB", "FB"}
-        combine = combine.filter(pl.col("pos").is_in(skill_positions))
-        combine = combine.filter(pl.col("pfr_id").is_not_null())
-
-        # Map combine position to our position_group
-        pos_map = {"QB": "QB", "RB": "RB", "HB": "RB", "FB": "RB", "WR": "WR", "TE": "TE"}
-        combine = combine.with_columns(
-            pl.col("pos").replace_strict(pos_map, default=None).alias("position_group")
-        ).filter(pl.col("position_group").is_not_null())
-
-        # Use pfr_id as player_id for rookies (no gsis_id available pre-draft)
-        # Team is null (unknown until draft) — XGBoost handles nulls natively
-        # Set years_exp=0 so downstream is_rookie detection works
-        rookie_rows = combine.select([
-            pl.col("pfr_id").alias("player_id"),
-            pl.lit(proj_year).alias("season"),
-            pl.lit(None).cast(pl.Utf8).alias("team"),
-            pl.col("position_group"),
-            pl.col("player_name").alias("player_display_name"),
-            pl.lit(0).alias("years_exp"),
-        ])
-
-        # Exclude any rookies already in the dataset (shouldn't happen, but safety check)
-        existing_ids = set(season_df["player_id"].unique().to_list())
-        rookie_rows = rookie_rows.filter(~pl.col("player_id").is_in(list(existing_ids)))
-
-        print(f"  Adding {rookie_rows.shape[0]} rookies from {proj_year} combine data")
-    except Exception as e:
-        print(f"  No {proj_year} combine data available ({e}), skipping rookies")
-        rookie_rows = None
-
-    # Append dummy rows (and rookies) and rebuild prior features
-    parts = [season_df, dummy]
-    if rookie_rows is not None and rookie_rows.shape[0] > 0:
-        parts.append(rookie_rows)
-    extended = pl.concat(parts, how="diagonal")
-    extended = extended.sort(["player_id", "season"])
-
-    # Rebuild prior-season features
-    extended = _build_prior_features(extended)
-
-    # Add injury, metadata, and roster context features
-    extended = _add_injury_features(extended, seasons)
-    extended = _add_player_metadata(extended, seasons)
-    extended = _add_combine_draft_features(extended)
-    extended = _add_roster_context_features(extended, seasons)
-
-    # Filter to the projection rows only
-    proj = extended.filter(pl.col("season") == proj_year)
-    # Keep veterans (have prior stats) AND rookies (have combine/draft features)
-    proj = proj.filter(
-        pl.col("prior1_ppg").is_not_null()
-        | (pl.col("is_rookie") == 1.0)
-    )
-
-    # Metadata join misses projection rows (season=max+1 has no roster data).
-    # Fill from the most recent season's roster data for each player.
-    meta_cols = ["years_exp", "height", "weight", "draft_number", "age"]
-    available_meta = [c for c in meta_cols if c in proj.columns]
-    prior_meta = (
-        extended.filter(pl.col("season") == max_season)
-        .select(["player_id"] + available_meta)
-        .unique(subset=["player_id"])
-    )
-    # Bump years_exp and age by 1 for the projection season
-    if "years_exp" in prior_meta.columns:
-        prior_meta = prior_meta.with_columns(
-            (pl.col("years_exp") + 1).alias("years_exp")
-        )
-    if "age" in prior_meta.columns:
-        prior_meta = prior_meta.with_columns(
-            (pl.col("age") + 1.0).alias("age")
-        )
-    # Rename to avoid collision, then fill nulls from prior season
-    rename_map = {c: f"_meta_{c}" for c in available_meta}
-    prior_meta = prior_meta.rename(rename_map)
-    proj = proj.join(prior_meta, on="player_id", how="left")
-    for c in available_meta:
-        proj = proj.with_columns(
-            pl.col(c).fill_null(pl.col(f"_meta_{c}")).alias(c)
-        )
-    proj = proj.drop([f"_meta_{c}" for c in available_meta])
-
-    # For rookies, fill metadata from combine data since they have no prior roster entry
-    if rookie_rows is not None and rookie_rows.shape[0] > 0:
-        combine_meta = nfl.load_combine([proj_year])
-        # Parse height from "6-2" format to inches (float)
-        combine_meta = combine_meta.with_columns(
-            pl.col("ht").str.split("-").map_elements(
-                lambda parts: float(parts[0]) * 12 + float(parts[1]) if len(parts) == 2 else None,
-                return_dtype=pl.Float64,
-            ).alias("height_inches")
-        )
-        rookie_meta = (
-            combine_meta.select(["pfr_id", "height_inches", "wt"])
-            .drop_nulls(subset=["pfr_id"])
-            .unique(subset=["pfr_id"])
-            .rename({"pfr_id": "player_id", "height_inches": "_rk_height", "wt": "_rk_weight"})
-        )
-        if rookie_meta["_rk_weight"].dtype != pl.Float64:
-            rookie_meta = rookie_meta.with_columns(pl.col("_rk_weight").cast(pl.Float64, strict=False))
-        # Fill nulls for rookies only
-        proj = proj.join(rookie_meta, on="player_id", how="left")
-        proj = proj.with_columns([
-            pl.col("height").fill_null(pl.col("_rk_height")),
-            pl.col("weight").fill_null(pl.col("_rk_weight")),
-        ]).drop(["_rk_height", "_rk_weight"])
-        # Set years_exp = 0 for rookies
-        proj = proj.with_columns(
-            pl.when(pl.col("is_rookie") == 1.0)
-            .then(0)
-            .otherwise(pl.col("years_exp"))
-            .alias("years_exp")
-        )
-
-    # Add manual adjustments from rosters if available
-    if rosters is not None and "adjustment_ppg" in rosters.columns:
-        adj = rosters.select(["player_id", "adjustment_ppg"])
-        proj = proj.join(adj, on="player_id", how="left")
-    if "adjustment_ppg" not in proj.columns:
-        proj = proj.with_columns(pl.lit(0.0).alias("adjustment_ppg"))
-
-    # Add dummy targets (won't be used, but needed for column compatibility)
-    proj = proj.with_columns([
-        pl.lit(0.0).alias("target_ppg"),
-        pl.lit(0.0).alias("target_games"),
-        pl.lit(0.0).alias("target_total"),
-    ])
-
-    print(f"  Projection rows: {proj.shape[0]} players")
-    return proj
 
 
 if __name__ == "__main__":
