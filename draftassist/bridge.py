@@ -6,10 +6,13 @@ Handles both Sleeper API data and manual draft mode.
 from __future__ import annotations
 
 import re
+from statistics import mean as _mean
 
 from draftsim.config import LeagueConfig
 from draftsim.draft import DraftState
 from draftsim.players import Player
+
+from .scoring import sleeper_stats_to_fantasy_points
 
 
 def _normalize(name: str) -> str:
@@ -224,6 +227,109 @@ def default_config_for_sport(
         roster_size=roster_size,
         lineup=lineup,
     )
+
+
+def attach_sleeper_projections(
+    players: list[Player],
+    sleeper_projections: dict[str, dict],
+    scoring: dict[str, float] | None = None,
+) -> int:
+    """Populate Sleeper projection fields on players with a sleeper_id.
+
+    Also saves model backup values (``_model_*`` fields) so they can be
+    restored when toggling back to model projections.
+
+    Returns the number of players that received Sleeper projections.
+    """
+    # Compute position-average floor/ceiling ratios from model data
+    # so we can synthesize estimated floor/ceiling for Sleeper projections.
+    _pos_ratios: dict[str, tuple[float, float]] = {}  # pos -> (floor_ratio, ceil_ratio)
+    by_pos: dict[str, list[Player]] = {}
+    for p in players:
+        by_pos.setdefault(p.position, []).append(p)
+    for pos, plist in by_pos.items():
+        valid = [p for p in plist if p.projected_total > 0]
+        if valid:
+            floor_ratio = _mean(
+                p.total_floor / p.projected_total
+                for p in valid if p.total_floor > 0
+            ) if any(p.total_floor > 0 for p in valid) else 0.7
+            ceil_ratio = _mean(
+                p.total_ceiling / p.projected_total
+                for p in valid if p.total_ceiling > 0
+            ) if any(p.total_ceiling > 0 for p in valid) else 1.3
+            _pos_ratios[pos] = (floor_ratio, ceil_ratio)
+        else:
+            _pos_ratios[pos] = (0.7, 1.3)
+
+    matched = 0
+    for p in players:
+        # Save model backup (always, even if no sleeper data)
+        p._model_projected_total = p.projected_total
+        p._model_projected_ppg = p.projected_ppg
+        p._model_projected_games = p.projected_games
+        p._model_total_floor = p.total_floor
+        p._model_total_ceiling = p.total_ceiling
+
+        if not p.sleeper_id:
+            continue
+        stats = sleeper_projections.get(p.sleeper_id)
+        if not stats:
+            continue
+
+        pts = sleeper_stats_to_fantasy_points(stats, scoring)
+        if pts <= 0:
+            continue
+
+        # Estimate games from Sleeper stats or fall back to model
+        games = float(stats.get("gp", 0) or stats.get("games", 0) or 0)
+        if games <= 0:
+            games = p.projected_games if p.projected_games > 0 else 17.0
+
+        p.sleeper_projected_total = pts
+        p.sleeper_projected_games = games
+        p.sleeper_projected_ppg = pts / games if games > 0 else 0.0
+        matched += 1
+
+    # Store position ratios on a module-level variable for swap_projection_source
+    attach_sleeper_projections._pos_ratios = _pos_ratios
+    return matched
+
+
+def swap_projection_source(players: list[Player], source: str) -> None:
+    """Swap the active projection values on all players.
+
+    Args:
+        source: ``"sleeper"`` to use Sleeper projections, ``"model"`` to restore.
+    """
+    pos_ratios = getattr(attach_sleeper_projections, "_pos_ratios", {})
+
+    if source == "sleeper":
+        for p in players:
+            if p.sleeper_projected_total > 0:
+                p.projected_total = p.sleeper_projected_total
+                p.projected_ppg = p.sleeper_projected_ppg
+                p.projected_games = p.sleeper_projected_games
+                # Estimate floor/ceiling from position ratios
+                fr, cr = pos_ratios.get(p.position, (0.7, 1.3))
+                p.total_floor = round(p.projected_total * fr, 1)
+                p.total_ceiling = round(p.projected_total * cr, 1)
+            # Players without Sleeper data keep their model values
+    elif source == "model":
+        for p in players:
+            if p._model_projected_total > 0:
+                p.projected_total = p._model_projected_total
+                p.projected_ppg = p._model_projected_ppg
+                p.projected_games = p._model_projected_games
+                p.total_floor = p._model_total_floor
+                p.total_ceiling = p._model_total_ceiling
+
+    # Re-sort and recompute pos_rank
+    players.sort(key=lambda p: p.projected_total, reverse=True)
+    pos_counts: dict[str, int] = {}
+    for p in players:
+        pos_counts[p.position] = pos_counts.get(p.position, 0) + 1
+        p.pos_rank = pos_counts[p.position]
 
 
 def rebuild_from_manual_picks(

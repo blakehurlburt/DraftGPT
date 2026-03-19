@@ -28,11 +28,13 @@ from draftsim.value import compute_dynamic_replacement_levels, compute_replaceme
 from draftsim.live_sim import SimSnapshot, run_live_simulation
 
 from .bridge import (
-    build_player_index, config_from_sleeper_meta, rebuild_draft_state,
-    default_config_for_sport, rebuild_from_manual_picks,
+    attach_sleeper_projections, build_player_index, config_from_sleeper_meta,
+    default_config_for_sport, rebuild_draft_state, rebuild_from_manual_picks,
+    swap_projection_source,
 )
 from .recommender import get_recommendations
-from .sleeper import fetch_all_players, fetch_draft_meta, fetch_draft_picks
+from .scoring import extract_scoring_from_meta
+from .sleeper import fetch_all_players, fetch_draft_meta, fetch_draft_picks, fetch_projections
 
 log = logging.getLogger("draftassist")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
@@ -66,6 +68,9 @@ class DraftSession:
     sim_task: asyncio.Task | None = None
     sim_cancel: asyncio.Event = field(default_factory=asyncio.Event)
     sim_snapshot: dict | None = None
+    # Projection source
+    projection_source: str = "model"  # "model" or "sleeper"
+    sleeper_projections_matched: int = 0  # how many players have Sleeper data
     # Manual draft mode
     mode: str = "sleeper"  # "sleeper" or "manual"
     sport: str = "nfl"
@@ -187,7 +192,8 @@ def _compute_adp_order(players: list[Player], platform: str) -> list[str]:
 
 
 def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
-                         skip_recommendations=False, risk_profile="balanced"):
+                         skip_recommendations=False, risk_profile="balanced",
+                         projection_source="model"):
     """Build the JSON payload describing current draft state."""
     config = state.config
     is_complete = state.is_complete
@@ -310,6 +316,8 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
         "user_roster": user_roster,
         "team_needs": needs,
         "draft_status": meta.get("status", "unknown"),
+        "projection_source": projection_source,
+        "floor_estimated": projection_source == "sleeper",
         "available_rookies": available_rookies,
     }
 
@@ -324,6 +332,7 @@ def _refresh_state(sess: DraftSession, picks):
         state, sess.meta, picks,
         sess.user_slot, sess.players, sess.adp_order,
         risk_profile=sess.risk_profile,
+        projection_source=sess.projection_source,
     )
     sess.state_payload = payload
     return payload
@@ -347,6 +356,7 @@ def _refresh_manual_state(sess: DraftSession):
         state, meta, sess.picks,
         sess.user_slot, sess.players, sess.adp_order,
         risk_profile=sess.risk_profile,
+        projection_source=sess.projection_source,
     )
     sess.state_payload = payload
     return state, payload
@@ -469,6 +479,7 @@ async def _poll_loop(sess: DraftSession):
                     sess.user_slot, sess.players, sess.adp_order,
                     skip_recommendations=True,
                     risk_profile=sess.risk_profile,
+                    projection_source=sess.projection_source,
                 )
                 sess.state_payload = payload
                 _push_to_subscribers(sess, payload)
@@ -484,6 +495,7 @@ async def _poll_loop(sess: DraftSession):
                         state, sess.meta, picks,
                         sess.user_slot, sess.players, sess.adp_order,
                         risk_profile=sess.risk_profile,
+                        projection_source=sess.projection_source,
                     )
                     sess.state_payload = payload
                     _push_to_subscribers(sess, payload)
@@ -529,9 +541,19 @@ async def connect_draft(
         meta = await fetch_draft_meta(client, draft_id)
         picks = await fetch_draft_picks(client, draft_id)
         sleeper_players = await fetch_all_players(client)
+        # Pre-fetch Sleeper projections for instant toggling later
+        try:
+            sleeper_proj = await fetch_projections(client)
+        except Exception:
+            sleeper_proj = {}
+            log.warning("Failed to fetch Sleeper projections — tab will be disabled")
 
     players = load_players()
     id_to_player = build_player_index(players, sleeper_players)
+
+    # Attach Sleeper projections to players (also saves model backups)
+    scoring = extract_scoring_from_meta(meta)
+    sleeper_matched = attach_sleeper_projections(players, sleeper_proj, scoring)
 
     config = config_from_sleeper_meta(meta)
     state = rebuild_draft_state(config, players, picks, id_to_player)
@@ -549,10 +571,12 @@ async def connect_draft(
     sess.adp_platform = "consensus"
     sess.adp_order = _compute_adp_order(players, "consensus")
     sess.last_activity = time.monotonic()
+    sess.sleeper_projections_matched = sleeper_matched
 
     payload = _build_state_payload(
         state, meta, picks, slot_0, players, sess.adp_order,
         risk_profile=sess.risk_profile,
+        projection_source=sess.projection_source,
     )
     sess.state_payload = payload
 
@@ -560,8 +584,10 @@ async def connect_draft(
     _ensure_poll_running(sess)
 
     log.info(
-        "Connected: %d teams, %d rounds, %d picks, %d players matched",
+        "Connected: %d teams, %d rounds, %d picks, %d players matched, "
+        "%d sleeper projections",
         config.num_teams, config.num_rounds, len(picks), len(id_to_player),
+        sleeper_matched,
     )
 
     return JSONResponse({
@@ -575,6 +601,8 @@ async def connect_draft(
         "players_matched": len(id_to_player),
         "total_players": len(players),
         "draft_status": meta.get("status", "unknown"),
+        "sleeper_projections_available": sleeper_matched > 0,
+        "sleeper_projections_matched": sleeper_matched,
     })
 
 
@@ -631,6 +659,45 @@ async def set_risk_profile(
         _refresh_state(sess, picks)
 
     return JSONResponse({"status": "ok", "profile": profile})
+
+
+@app.post("/api/projections")
+async def set_projection_source(
+    session_id: str = Query(..., description="Session ID"),
+    source: str = Query("model", description="Projection source: model or sleeper"),
+):
+    """Switch between model projections and Sleeper projections."""
+    sess = _get_session(session_id)
+    if not sess.connected:
+        return JSONResponse({"error": "Not connected to a draft"}, status_code=400)
+
+    valid = {"model", "sleeper"}
+    if source not in valid:
+        return JSONResponse({"error": f"Invalid source. Choose from: {valid}"}, status_code=400)
+
+    if source == "sleeper" and sess.sleeper_projections_matched == 0:
+        return JSONResponse(
+            {"error": "Sleeper projections not available for this session"},
+            status_code=400,
+        )
+
+    swap_projection_source(sess.players, source)
+    sess.projection_source = source
+
+    # Recalculate ADP order (uses current projected_total)
+    sess.adp_order = _compute_adp_order(sess.players, sess.adp_platform)
+
+    # Cancel running sim and rebuild state
+    await _cancel_sim(sess)
+
+    if sess.mode == "manual":
+        _refresh_manual_state(sess)
+    else:
+        async with httpx.AsyncClient(timeout=10) as client:
+            picks = await fetch_draft_picks(client, sess.draft_id)
+        _refresh_state(sess, picks)
+
+    return JSONResponse({"status": "ok", "source": source})
 
 
 @app.get("/api/more")
@@ -787,6 +854,7 @@ async def create_manual_draft(
     payload = _build_state_payload(
         state, meta, [], slot_0, players, sess.adp_order,
         risk_profile=sess.risk_profile,
+        projection_source=sess.projection_source,
     )
     sess.state_payload = payload
 
@@ -866,6 +934,7 @@ async def manual_pick(
         state, meta, sess.picks,
         sess.user_slot, sess.players, sess.adp_order,
         risk_profile=sess.risk_profile,
+        projection_source=sess.projection_source,
     )
     sess.state_payload = payload
     _push_to_subscribers(sess, payload)

@@ -94,6 +94,11 @@
                     <button class="tab" data-value="vols" title="Value Over Last Starter — how much better this player is than the worst starter at this position across the league. Zero means this player wouldn't start for any team">VOLS</button>
                 </div>
                 <div id="filter-bar">
+                    <div id="proj-tabs">
+                        <span class="proj-label" title="Projection source used for all calculations">Proj:</span>
+                        <button class="proj-tab active" data-proj="model" title="Model projections with floor/ceiling quantiles">Model</button>
+                        <button class="proj-tab" data-proj="sleeper" title="Sleeper's season-long projections">Sleeper</button>
+                    </div>
                     <div id="adp-tabs">
                         <span class="adp-label" title="ADP source used for opponent modeling in VONA calculations">ADP:</span>
                         <button class="adp-tab active" data-adp="consensus" title="FantasyPros consensus ADP (avg of ESPN, Sleeper, CBS, NFL, RTSports, Fantrax)">Consensus</button>
@@ -167,6 +172,6 @@
         </div>
     </main>
 
-    <script src="/static/app.js?v=4"></script>
+    <script src="/static/app.js?v=5"></script>
 </body>
 </html>

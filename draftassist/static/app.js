@@ -39,6 +39,7 @@
     let currentStrategy = "vona";  // strategy used for generating recommendations
     let currentAdp = "consensus";
     let currentRisk = "balanced";  // "safe", "balanced", "aggressive"
+    let currentProj = "model";    // "model" or "sleeper"
     let currentValueMode = "vbd_score";  // "vorp", "vona", "vols", "vbd_score"
     let currentSort = "value";  // "value", "adp", or "rank"
     let posFilters = new Set(["QB", "RB", "WR", "TE"]);
@@ -287,13 +288,23 @@
             key: "total_floor", label: "Floor",
             title: "10th percentile projection (pessimistic)",
             tdClass: "range-floor",
-            render: (r) => r.total_floor || "—",
+            render: (r, ctx) => {
+                if (!r.total_floor) return "—";
+                const prefix = ctx.floorEstimated ? "~" : "";
+                return prefix + r.total_floor;
+            },
+            dynamicTdClass: (r, ctx) => ctx.floorEstimated ? "range-floor estimated" : "range-floor",
         },
         {
             key: "total_ceiling", label: "Ceil",
             title: "90th percentile projection (optimistic)",
             tdClass: "range-ceil",
-            render: (r) => r.total_ceiling || "—",
+            render: (r, ctx) => {
+                if (!r.total_ceiling) return "—";
+                const prefix = ctx.floorEstimated ? "~" : "";
+                return prefix + r.total_ceiling;
+            },
+            dynamicTdClass: (r, ctx) => ctx.floorEstimated ? "range-ceil estimated" : "range-ceil",
         },
         {
             key: "value", label: "VBD", id: "value-header",
@@ -368,7 +379,8 @@
         const tds = columns
             .filter((c) => !c.hidden || !c.hidden(ctx))
             .map((c) => {
-                const cls = c.tdClass ? ` class="${c.tdClass}"` : "";
+                const clsVal = c.dynamicTdClass ? c.dynamicTdClass(row, ctx) : (c.tdClass || "");
+                const cls = clsVal ? ` class="${clsVal}"` : "";
                 return `<td${cls}>${c.render(row, ctx)}</td>`;
             })
             .join("");
@@ -408,6 +420,29 @@
             tab.classList.add("active");
             currentValueMode = tab.dataset.value;
             if (currentState) renderRecommendations(currentState);
+        });
+    });
+
+    // Projection source tabs
+    $$(".proj-tab").forEach((tab) => {
+        tab.addEventListener("click", async () => {
+            if (tab.disabled) return;
+            $$(".proj-tab").forEach((t) => t.classList.remove("active"));
+            tab.classList.add("active");
+            currentProj = tab.dataset.proj;
+
+            try {
+                await fetch(
+                    apiUrl("/api/projections", { source: currentProj }),
+                    { method: "POST" }
+                );
+                const stateResp = await fetch(apiUrl("/api/state"));
+                const state = await stateResp.json();
+                resetExtraRecs();
+                updateUI(state);
+            } catch (err) {
+                console.error("Projection switch failed:", err);
+            }
         });
     });
 
@@ -614,6 +649,16 @@
             connectedDraftId = draftId;
             connectedSlot = slot;
 
+            // Enable/disable Sleeper projection tab based on availability
+            const sleeperProjTab = document.querySelector('.proj-tab[data-proj="sleeper"]');
+            if (sleeperProjTab) {
+                const available = data.sleeper_projections_available !== false;
+                sleeperProjTab.disabled = !available;
+                sleeperProjTab.title = available
+                    ? `Sleeper's season-long projections (${data.sleeper_projections_matched || 0} players)`
+                    : "Sleeper projections not available";
+            }
+
             showConnectedUI(draftId, slot, data);
 
             const stateResp = await fetch(apiUrl("/api/state"));
@@ -703,6 +748,14 @@
     function updateUI(state) {
         currentState = state;
 
+        // Sync projection source tab from server state
+        if (state.projection_source && state.projection_source !== currentProj) {
+            currentProj = state.projection_source;
+            $$(".proj-tab").forEach((t) => {
+                t.classList.toggle("active", t.dataset.proj === currentProj);
+            });
+        }
+
         roundDisplay.textContent = `Round ${state.current_round} / ${state.total_rounds}`;
         pickDisplay.textContent = `Pick ${state.current_pick} / ${state.total_picks}`;
         draftStatusBadge.textContent = state.draft_status;
@@ -742,7 +795,8 @@
 
     function renderRecommendations(state) {
         const allRecs = getAllRecsForStrategy(currentStrategy);
-        const ctx = { showSim: !!simData, currentStrategy, getSimValue, valueMode: currentValueMode };
+        const floorEstimated = !!(state.floor_estimated);
+        const ctx = { showSim: !!simData, currentStrategy, getSimValue, valueMode: currentValueMode, floorEstimated };
 
         // Render header (updates value label, sim column visibility)
         renderTableHeader(REC_COLUMNS, $("#rec-head"), ctx);

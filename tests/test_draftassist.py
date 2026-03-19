@@ -8,17 +8,24 @@ from draftsim.draft import DraftState
 
 from draftassist.bridge import (
     _normalize,
+    attach_sleeper_projections,
     build_player_index,
     config_from_sleeper_meta,
-    rebuild_draft_state,
-    _make_placeholder,
     default_config_for_sport,
+    rebuild_draft_state,
     rebuild_from_manual_picks,
+    swap_projection_source,
+    _make_placeholder,
 )
 from draftassist.recommender import (
     top_n_picks,
     get_recommendations,
     Recommendation,
+)
+from draftassist.scoring import (
+    default_ppr_scoring,
+    extract_scoring_from_meta,
+    sleeper_stats_to_fantasy_points,
 )
 
 
@@ -484,3 +491,213 @@ class TestManualPayload:
         assert payload["draft_status"] == "in_progress"
         assert payload["current_pick"] == 1
         assert payload["num_teams"] == small_config.num_teams
+
+
+# ---------------------------------------------------------------------------
+# scoring.sleeper_stats_to_fantasy_points
+# ---------------------------------------------------------------------------
+
+class TestSleeperScoring:
+    def test_default_ppr_qb(self):
+        """A QB stat line should produce reasonable fantasy points."""
+        stats = {
+            "pass_yd": 4200,
+            "pass_td": 30,
+            "pass_int": 12,
+            "rush_yd": 300,
+            "rush_td": 3,
+        }
+        pts = sleeper_stats_to_fantasy_points(stats)
+        # 4200*0.04 + 30*4 + 12*(-1) + 300*0.1 + 3*6 = 168+120-12+30+18 = 324
+        assert abs(pts - 324.0) < 0.1
+
+    def test_default_ppr_rb(self):
+        """An RB stat line with receptions (PPR)."""
+        stats = {
+            "rush_yd": 1200,
+            "rush_td": 10,
+            "rec": 50,
+            "rec_yd": 400,
+            "rec_td": 2,
+        }
+        pts = sleeper_stats_to_fantasy_points(stats)
+        # 1200*0.1 + 10*6 + 50*1 + 400*0.1 + 2*6 = 120+60+50+40+12 = 282
+        assert abs(pts - 282.0) < 0.1
+
+    def test_custom_scoring(self):
+        """Custom scoring should override defaults."""
+        stats = {"rec": 80, "rec_yd": 1000}
+        # Half-PPR
+        scoring = {"rec": 0.5, "rec_yd": 0.1}
+        pts = sleeper_stats_to_fantasy_points(stats, scoring)
+        # 80*0.5 + 1000*0.1 = 40 + 100 = 140
+        assert abs(pts - 140.0) < 0.1
+
+    def test_empty_stats(self):
+        pts = sleeper_stats_to_fantasy_points({})
+        assert pts == 0.0
+
+    def test_missing_stat_keys_handled(self):
+        """Stats dict may have keys not in scoring — should be ignored."""
+        stats = {"pass_yd": 100, "unknown_stat": 999}
+        pts = sleeper_stats_to_fantasy_points(stats)
+        assert pts == 100 * 0.04
+
+    def test_extract_scoring_from_meta_present(self):
+        meta = {
+            "settings": {
+                "scoring_settings": {"rec": 0.5, "pass_yd": 0.04, "rush_td": 6},
+            }
+        }
+        scoring = extract_scoring_from_meta(meta)
+        assert scoring is not None
+        assert scoring["rec"] == 0.5
+
+    def test_extract_scoring_from_meta_missing(self):
+        meta = {"settings": {}}
+        assert extract_scoring_from_meta(meta) is None
+
+    def test_default_ppr_scoring_keys(self):
+        scoring = default_ppr_scoring()
+        assert "pass_yd" in scoring
+        assert "rec" in scoring
+        assert scoring["rec"] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# bridge.attach_sleeper_projections + swap_projection_source
+# ---------------------------------------------------------------------------
+
+class TestSleeperProjections:
+    def _make_players_with_ids(self):
+        """Create players with sleeper_id and realistic floor/ceiling."""
+        players = []
+        for i, (name, pos, total) in enumerate([
+            ("Alpha QB", "QB", 340),
+            ("Bravo RB", "RB", 280),
+            ("Charlie WR", "WR", 260),
+            ("Delta TE", "TE", 180),
+        ]):
+            p = Player(
+                name=name, position=pos, team="TST",
+                projected_ppg=total / 17, projected_games=17,
+                projected_total=total, pos_rank=1,
+                total_floor=total * 0.75,
+                total_ceiling=total * 1.25,
+                sleeper_id=str(100 + i),
+            )
+            players.append(p)
+        players.sort(key=lambda p: p.projected_total, reverse=True)
+        return players
+
+    def test_attach_populates_sleeper_fields(self):
+        players = self._make_players_with_ids()
+        sleeper_proj = {
+            "100": {"pass_yd": 4000, "pass_td": 28, "pass_int": 10},
+            "101": {"rush_yd": 1100, "rush_td": 8, "rec": 40, "rec_yd": 300, "rec_td": 2},
+        }
+        matched = attach_sleeper_projections(players, sleeper_proj)
+        assert matched == 2
+        # QB should have sleeper projections
+        qb = next(p for p in players if p.name == "Alpha QB")
+        assert qb.sleeper_projected_total > 0
+        # WR (id=102) not in sleeper_proj — no sleeper data
+        wr = next(p for p in players if p.name == "Charlie WR")
+        assert wr.sleeper_projected_total == 0.0
+
+    def test_attach_saves_model_backup(self):
+        players = self._make_players_with_ids()
+        sleeper_proj = {
+            "100": {"pass_yd": 4000, "pass_td": 28, "pass_int": 10},
+        }
+        attach_sleeper_projections(players, sleeper_proj)
+        qb = next(p for p in players if p.name == "Alpha QB")
+        assert qb._model_projected_total == 340
+        assert qb._model_total_floor == 340 * 0.75
+
+    def test_swap_to_sleeper_and_back(self):
+        players = self._make_players_with_ids()
+        sleeper_proj = {
+            "100": {"pass_yd": 4000, "pass_td": 28, "pass_int": 10},
+            "101": {"rush_yd": 1100, "rush_td": 8, "rec": 40, "rec_yd": 300, "rec_td": 2},
+        }
+        attach_sleeper_projections(players, sleeper_proj)
+
+        # Save original model values
+        original_totals = {p.name: p.projected_total for p in players}
+
+        # Swap to sleeper
+        swap_projection_source(players, "sleeper")
+        qb = next(p for p in players if p.name == "Alpha QB")
+        assert qb.projected_total != original_totals["Alpha QB"]
+        assert qb.projected_total == qb.sleeper_projected_total
+
+        # Players without sleeper data keep model values
+        wr = next(p for p in players if p.name == "Charlie WR")
+        assert wr.projected_total == original_totals["Charlie WR"]
+
+        # Swap back to model
+        swap_projection_source(players, "model")
+        for p in players:
+            assert abs(p.projected_total - original_totals[p.name]) < 0.01, (
+                f"{p.name}: expected {original_totals[p.name]}, got {p.projected_total}"
+            )
+
+    def test_swap_recomputes_pos_rank(self):
+        players = self._make_players_with_ids()
+        sleeper_proj = {
+            "100": {"pass_yd": 1000, "pass_td": 5, "pass_int": 2},  # low QB
+            "101": {"rush_yd": 2000, "rush_td": 20, "rec": 80, "rec_yd": 800, "rec_td": 5},  # elite RB
+        }
+        attach_sleeper_projections(players, sleeper_proj)
+        swap_projection_source(players, "sleeper")
+
+        # RB should now rank higher than QB
+        rb = next(p for p in players if p.name == "Bravo RB")
+        qb = next(p for p in players if p.name == "Alpha QB")
+        assert rb.projected_total > qb.projected_total
+
+        # pos_rank should be reassigned
+        assert rb.pos_rank == 1  # only RB
+
+    def test_estimated_floor_ceiling_on_sleeper(self):
+        players = self._make_players_with_ids()
+        sleeper_proj = {
+            "100": {"pass_yd": 4000, "pass_td": 28, "pass_int": 10},
+        }
+        attach_sleeper_projections(players, sleeper_proj)
+        swap_projection_source(players, "sleeper")
+        qb = next(p for p in players if p.name == "Alpha QB")
+        # Floor/ceiling should be estimated (not zero)
+        assert qb.total_floor > 0
+        assert qb.total_ceiling > qb.total_floor
+        assert qb.total_floor < qb.projected_total
+        assert qb.total_ceiling > qb.projected_total
+
+
+# ---------------------------------------------------------------------------
+# Projection source in state payload
+# ---------------------------------------------------------------------------
+
+class TestProjectionSourcePayload:
+    def test_payload_includes_projection_source(self, sample_players, small_config):
+        from draftassist.app import _build_state_payload
+
+        state = DraftState.create(small_config, sample_players)
+        payload = _build_state_payload(
+            state, {"status": "in_progress"}, [], user_slot=0,
+            players=sample_players, projection_source="model",
+        )
+        assert payload["projection_source"] == "model"
+        assert payload["floor_estimated"] is False
+
+    def test_payload_floor_estimated_sleeper(self, sample_players, small_config):
+        from draftassist.app import _build_state_payload
+
+        state = DraftState.create(small_config, sample_players)
+        payload = _build_state_payload(
+            state, {"status": "in_progress"}, [], user_slot=0,
+            players=sample_players, projection_source="sleeper",
+        )
+        assert payload["projection_source"] == "sleeper"
+        assert payload["floor_estimated"] is True

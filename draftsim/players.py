@@ -27,6 +27,16 @@ class Player:
     bye_week: int = 0
     is_rookie: bool = False
     sleeper_id: str = ""
+    # Sleeper projection values (populated at connect time)
+    sleeper_projected_total: float = 0.0
+    sleeper_projected_ppg: float = 0.0
+    sleeper_projected_games: float = 0.0
+    # Model backup (saved before first swap, used to restore)
+    _model_projected_total: float = 0.0
+    _model_projected_ppg: float = 0.0
+    _model_projected_games: float = 0.0
+    _model_total_floor: float = 0.0
+    _model_total_ceiling: float = 0.0
 
     @property
     def upside(self) -> float:

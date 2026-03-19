@@ -46,3 +46,47 @@ async def fetch_all_players(client: httpx.AsyncClient) -> dict[str, dict]:
         json.dump(data, f)
 
     return data
+
+
+async def fetch_projections(
+    client: httpx.AsyncClient, season: int = 2026,
+) -> dict[str, dict]:
+    """Fetch season-long player projections from Sleeper. Cached 24h.
+
+    Returns dict mapping player_id -> stat projection dict
+    (keys like pass_yd, rush_yd, rec, rec_yd, rush_td, etc.).
+    """
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_path = CACHE_DIR / f"sleeper_projections_{season}.json"
+
+    if cache_path.exists():
+        age = time.time() - cache_path.stat().st_mtime
+        if age < CACHE_TTL:
+            with open(cache_path) as f:
+                return json.load(f)
+
+    resp = await client.get(
+        f"{BASE_URL}/v1/projections/nfl/{season}",
+        params={"season_type": "regular"},
+    )
+    resp.raise_for_status()
+    raw = resp.json()
+
+    # Normalize: response is list of dicts with player_id + stats,
+    # or a dict keyed by player_id. Handle both formats.
+    if isinstance(raw, list):
+        data = {}
+        for entry in raw:
+            pid = str(entry.get("player_id", ""))
+            stats = entry.get("stats") or entry
+            if pid:
+                data[pid] = stats
+    elif isinstance(raw, dict):
+        data = {str(k): v for k, v in raw.items()}
+    else:
+        data = {}
+
+    with open(cache_path, "w") as f:
+        json.dump(data, f)
+
+    return data
