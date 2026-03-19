@@ -181,9 +181,12 @@ async def data_info():
     return JSONResponse({"sources": sources})
 
 
-def _compute_adp_order(players: list[Player], platform: str) -> list[str]:
+def _compute_adp_order(players: list[Player], platform: str, sport: str = "nfl") -> list[str]:
     """Generate ADP-ordered player name list for a given platform."""
     sorted_by_proj = sorted(players, key=lambda p: p.projected_total, reverse=True)
+    if sport != "nfl":
+        # No real ADP data for non-NFL sports; use projection ranking
+        return [p.name for p in sorted_by_proj]
     if platform == "consensus":
         entries = generate_consensus_adp(sorted_by_proj)
     else:
@@ -569,7 +572,7 @@ async def connect_draft(
     sess.last_meta_refresh = time.monotonic()
     sess.connected = True
     sess.adp_platform = "consensus"
-    sess.adp_order = _compute_adp_order(players, "consensus")
+    sess.adp_order = _compute_adp_order(players, "consensus", sport="nfl")
     sess.last_activity = time.monotonic()
     sess.sleeper_projections_matched = sleeper_matched
 
@@ -621,7 +624,7 @@ async def set_adp_platform(
         return JSONResponse({"error": f"Invalid platform. Choose from: {valid}"}, status_code=400)
 
     sess.adp_platform = platform
-    sess.adp_order = _compute_adp_order(sess.players, platform)
+    sess.adp_order = _compute_adp_order(sess.players, platform, sport=sess.sport)
 
     # Rebuild current state payload with new ADP
     if sess.mode == "manual":
@@ -685,7 +688,7 @@ async def set_projection_source(
     sess.projection_source = source
 
     # Recalculate ADP order (uses current projected_total)
-    sess.adp_order = _compute_adp_order(sess.players, sess.adp_platform)
+    sess.adp_order = _compute_adp_order(sess.players, sess.adp_platform, sport=sess.sport)
 
     # Cancel running sim and rebuild state
     await _cancel_sim(sess)
@@ -769,7 +772,10 @@ async def get_state(
     # Make sure poll is still running (Sleeper mode only)
     if sess.mode == "sleeper":
         _ensure_poll_running(sess)
-    return JSONResponse(sess.state_payload)
+    payload = dict(sess.state_payload)
+    payload["sport"] = sess.sport
+    payload["mode"] = sess.mode
+    return JSONResponse(payload)
 
 
 @app.get("/api/sim")
@@ -854,7 +860,7 @@ async def create_manual_draft(
     sess.draft_state = state
     sess.connected = True
     sess.adp_platform = "consensus"
-    sess.adp_order = _compute_adp_order(players, "consensus") if sport == "nfl" else []
+    sess.adp_order = _compute_adp_order(players, "consensus", sport=sport)
     sess.last_activity = time.monotonic()
 
     meta = {"status": "in_progress"}

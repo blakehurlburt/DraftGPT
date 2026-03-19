@@ -42,7 +42,7 @@
     let currentProj = "model";    // "model" or "sleeper"
     let currentValueMode = "vbd_score";  // "vorp", "vona", "vols", "vbd_score"
     let currentSort = "value";  // "value", "adp", or "rank"
-    let posFilters = new Set(["QB", "RB", "WR", "TE"]);
+    let posFilters = new Set(["QB", "RB", "WR", "TE"]);  // reset dynamically per sport
     let rookieOnly = false;
     let currentState = null;
     let eventSource = null;
@@ -56,6 +56,80 @@
     let rosterSort = null;  // null = draft order, or {key, asc}
     let draftMode = "sleeper";  // "sleeper" or "manual"
     let draftSport = "nfl";     // "nfl" or "mlb"
+
+    const NFL_POSITIONS = ["QB", "RB", "WR", "TE"];
+    const MLB_POSITIONS = ["C", "1B", "2B", "3B", "SS", "OF", "DH", "SP", "RP"];
+
+    /**
+     * Rebuild position filter chips, projection/ADP tabs, and column
+     * visibility based on the current sport (draftSport).
+     */
+    function initSportUI() {
+        const positions = draftSport === "mlb" ? MLB_POSITIONS : NFL_POSITIONS;
+        posFilters = new Set(positions);
+        rookieOnly = false;
+
+        // Rebuild position filter chips
+        const container = posFilter;
+        // Keep the label, remove everything else
+        while (container.children.length > 1) container.removeChild(container.lastChild);
+
+        positions.forEach((pos) => {
+            const label = document.createElement("label");
+            label.className = "pos-toggle";
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.value = pos;
+            cb.checked = true;
+            cb.addEventListener("change", () => {
+                posFilters[cb.checked ? "add" : "delete"](pos);
+                if (currentState) renderRecommendations(currentState);
+            });
+            const chip = document.createElement("span");
+            chip.className = `pos-chip pos-${pos}`;
+            chip.textContent = pos;
+            label.appendChild(cb);
+            label.appendChild(chip);
+            container.appendChild(label);
+        });
+
+        // Rookies toggle — only for NFL
+        if (draftSport !== "mlb") {
+            const label = document.createElement("label");
+            label.className = "pos-toggle";
+            label.id = "rookie-filter";
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.id = "rookie-only";
+            cb.addEventListener("change", (e) => {
+                rookieOnly = e.target.checked;
+                if (currentState) renderRecommendations(currentState);
+            });
+            const chip = document.createElement("span");
+            chip.className = "pos-chip rookie-chip";
+            chip.textContent = "Rookies";
+            label.appendChild(cb);
+            label.appendChild(chip);
+            container.appendChild(label);
+        }
+
+        // Sleeper projection tab — hide for MLB
+        const sleeperProjTab = document.querySelector('.proj-tab[data-proj="sleeper"]');
+        if (sleeperProjTab) {
+            sleeperProjTab.classList.toggle("hidden", draftSport === "mlb");
+            if (draftSport === "mlb") {
+                currentProj = "model";
+                sleeperProjTab.classList.remove("active");
+                document.querySelector('.proj-tab[data-proj="model"]')?.classList.add("active");
+            }
+        }
+
+        // ADP tabs — hide for MLB (no real ADP data)
+        const adpTabs = document.getElementById("adp-tabs");
+        if (adpTabs) {
+            adpTabs.classList.toggle("hidden", draftSport === "mlb");
+        }
+    }
 
     // Extra recommendations fetched via "show more"
     let extraRecs = {};       // strategy -> array of additional recs
@@ -163,6 +237,7 @@
                 connectedDraftId = data.draft_id;
                 connectedSlot = slot;
 
+                initSportUI();
                 showConnectedUI(data.draft_id, slot, data);
 
                 // Show manual controls
@@ -293,6 +368,7 @@
         },
         {
             key: "bye_week", label: "Bye", title: "Bye week",
+            hidden: () => draftSport === "mlb",
             render: (r) => r.bye_week || "—",
         },
         {
@@ -365,6 +441,7 @@
         },
         {
             key: "bye_week", label: "Bye", sortKey: "bye_week",
+            hidden: () => draftSport === "mlb",
             render: (p) => p.bye_week || "—",
         },
         {
@@ -521,23 +598,11 @@
         simToggle.textContent = simCollapsed ? "Show" : "Hide";
     });
 
-    // Position filter checkboxes
-    posFilter.querySelectorAll("input[type=checkbox]").forEach((cb) => {
-        cb.addEventListener("change", () => {
-            if (cb.checked) {
-                posFilters.add(cb.value);
-            } else {
-                posFilters.delete(cb.value);
-            }
-            if (currentState) renderRecommendations(currentState);
-        });
-    });
+    // Position filter checkboxes and rookie filter are now created
+    // dynamically by initSportUI() — no static listeners needed here.
 
-    // Rookie-only filter
-    $("#rookie-only").addEventListener("change", (e) => {
-        rookieOnly = e.target.checked;
-        if (currentState) renderRecommendations(currentState);
-    });
+    // Initialize default position filters for NFL on page load
+    initSportUI();
 
     // Show more button
     showMoreBtn.addEventListener("click", async () => {
@@ -638,10 +703,16 @@
                 const stateResp = await fetch(apiUrl("/api/state"));
                 if (stateResp.ok) {
                     // Session still alive, reconnect
+                    const state = await stateResp.json();
                     connectedDraftId = draftId;
                     connectedSlot = slot;
+                    draftMode = state.mode || "sleeper";
+                    draftSport = state.sport || "nfl";
+                    initSportUI();
                     showConnectedUI(draftId, slot, null);
-                    const state = await stateResp.json();
+                    if (draftMode === "manual") {
+                        manualPickControls.classList.remove("hidden");
+                    }
                     resetExtraRecs();
                     updateUI(state);
                     startSSE();
@@ -662,8 +733,12 @@
             }
 
             sessionId = data.session_id;
+            draftMode = "sleeper";
+            draftSport = "nfl";
             connectedDraftId = draftId;
             connectedSlot = slot;
+
+            initSportUI();
 
             // Enable/disable Sleeper projection tab based on availability
             const sleeperProjTab = document.querySelector('.proj-tab[data-proj="sleeper"]');
