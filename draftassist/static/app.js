@@ -134,7 +134,7 @@
     // Extra recommendations fetched via "show more"
     let extraRecs = {};       // strategy -> array of additional recs
     let prefetchedRecs = {};  // strategy -> array (prefetched next batch)
-    let totalLoaded = 10;     // how many recs are currently loaded (initial)
+    let totalLoaded = 30;     // how many recs are currently loaded (initial — backend sends 30)
     let displayCount = 10;    // how many rows to show after filtering
     let prefetching = false;
 
@@ -650,7 +650,7 @@
     function resetExtraRecs() {
         extraRecs = {};
         prefetchedRecs = {};
-        totalLoaded = 10;
+        totalLoaded = 30;
         displayCount = 10;
     }
 
