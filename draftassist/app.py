@@ -211,10 +211,10 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
     if adp_order:
         adp_rank = {name: i + 1 for i, name in enumerate(adp_order)}
 
-    # Recommendations (only when it's user's turn and not skipped)
+    # Recommendations — always compute so user can plan ahead
     # Pre-compute for all 3 risk profiles so frontend can toggle client-side
     recs = {}
-    if is_my_turn and not skip_recommendations:
+    if not is_complete and not skip_recommendations:
         for rp in ("safe", "balanced", "aggressive"):
             rec_list = get_recommendations(
                 state, user_slot, players, adp_order, n=30, risk_profile=rp,
@@ -488,12 +488,8 @@ async def _poll_loop(sess: DraftSession):
                 _push_to_subscribers(sess, payload)
                 log.info("Pushed update: pick %d", pick_count)
 
-                # If it's the user's turn, compute recommendations and push again
-                is_my_turn = (
-                    not state.is_complete
-                    and state.current_team_idx == sess.user_slot
-                )
-                if is_my_turn:
+                # Push again with recommendations (computed async)
+                if not state.is_complete:
                     payload = _build_state_payload(
                         state, sess.meta, picks,
                         sess.user_slot, sess.players, sess.adp_order,
@@ -724,7 +720,7 @@ async def get_more_recommendations(
         state = rebuild_draft_state(config, sess.players, picks, sess.id_to_player)
 
     slot = sess.user_slot
-    if state.is_complete or state.current_team_idx != slot:
+    if state.is_complete:
         return JSONResponse({"recommendations": {}})
 
     total = offset + n
