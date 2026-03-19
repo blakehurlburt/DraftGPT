@@ -121,6 +121,22 @@
         });
     });
 
+    // Update defaults when sport changes
+    $$('input[name="sport"]').forEach((radio) => {
+        radio.addEventListener("change", () => {
+            const sport = radio.value;
+            const teamsInput = $("#manual-teams");
+            const roundsInput = $("#manual-rounds");
+            if (sport === "mlb") {
+                teamsInput.value = 10;
+                roundsInput.value = 23;  // MLB rosters are larger
+            } else {
+                teamsInput.value = 12;
+                roundsInput.value = 15;
+            }
+        });
+    });
+
     // Manual draft creation
     if (manualStartBtn) {
         manualStartBtn.addEventListener("click", async () => {

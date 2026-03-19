@@ -494,6 +494,49 @@ class TestManualPayload:
 
 
 # ---------------------------------------------------------------------------
+# Manual draft creation endpoint (error handling)
+# ---------------------------------------------------------------------------
+
+class TestCreateManualDraft:
+    """Tests for POST /api/create error handling."""
+
+    @pytest.fixture
+    def client(self):
+        from fastapi.testclient import TestClient
+        from draftassist.app import app
+        return TestClient(app)
+
+    def test_create_nfl_succeeds(self, client):
+        resp = client.post("/api/create?sport=nfl&num_teams=10&roster_size=15&user_slot=1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "connected"
+        assert data["mode"] == "manual"
+        assert data["sport"] == "nfl"
+
+    def test_create_mlb_missing_projections(self, client):
+        """MLB projections file doesn't exist — should return 400 JSON, not 500."""
+        resp = client.post("/api/create?sport=mlb&num_teams=10&roster_size=23&user_slot=1")
+        assert resp.status_code == 400
+        data = resp.json()
+        assert "detail" in data
+        assert "mlb_projections" in data["detail"].lower() or "not found" in data["detail"].lower()
+
+    def test_create_invalid_sport(self, client):
+        resp = client.post("/api/create?sport=nba&num_teams=10&roster_size=15&user_slot=1")
+        assert resp.status_code == 400
+        data = resp.json()
+        assert "detail" in data
+
+    def test_create_returns_json_on_error(self, client):
+        """Verify error responses are valid JSON (not HTML 500)."""
+        resp = client.post("/api/create?sport=mlb&num_teams=12&roster_size=15&user_slot=1")
+        # Must be parseable JSON regardless of status
+        data = resp.json()  # should not raise
+        assert isinstance(data, dict)
+
+
+# ---------------------------------------------------------------------------
 # scoring.sleeper_stats_to_fantasy_points
 # ---------------------------------------------------------------------------
 

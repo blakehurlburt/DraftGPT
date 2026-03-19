@@ -830,11 +830,18 @@ async def create_manual_draft(
     user_slot: int = Query(1, ge=1, le=20, description="1-indexed draft slot"),
 ):
     """Create a manual draft session (no Sleeper connection)."""
+    if sport not in ("nfl", "mlb"):
+        return JSONResponse({"detail": f"Unsupported sport: {sport}"}, status_code=400)
+
     session_id = str(uuid.uuid4())
     sess = DraftSession()
     sessions[session_id] = sess
 
-    players = load_players(sport=sport)
+    try:
+        players = load_players(sport=sport)
+    except FileNotFoundError as e:
+        sessions.pop(session_id, None)
+        return JSONResponse({"detail": str(e)}, status_code=400)
     config = default_config_for_sport(sport, num_teams, roster_size)
     state = DraftState.create(config, players)
 
