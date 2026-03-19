@@ -514,13 +514,29 @@ class TestCreateManualDraft:
         assert data["mode"] == "manual"
         assert data["sport"] == "nfl"
 
-    def test_create_mlb_missing_projections(self, client):
-        """MLB projections file doesn't exist — should return 400 JSON, not 500."""
+    def test_create_mlb_missing_projections(self, client, monkeypatch):
+        """Missing projections file should return 400 JSON, not 500."""
+        from draftassist import app as app_module
+        def _mock_load(**kwargs):
+            raise FileNotFoundError("Projections file not found: mlb_projections.csv")
+        monkeypatch.setattr(app_module, "load_players", _mock_load)
         resp = client.post("/api/create?sport=mlb&num_teams=10&roster_size=23&user_slot=1")
         assert resp.status_code == 400
         data = resp.json()
         assert "detail" in data
-        assert "mlb_projections" in data["detail"].lower() or "not found" in data["detail"].lower()
+        assert "not found" in data["detail"].lower()
+
+    def test_create_mlb_succeeds_with_projections(self, client):
+        """MLB draft should work when projections file exists."""
+        import os
+        mlb_path = os.path.join("data", "projections", "mlb_projections.csv")
+        if not os.path.exists(mlb_path):
+            pytest.skip("mlb_projections.csv not present")
+        resp = client.post("/api/create?sport=mlb&num_teams=10&roster_size=23&user_slot=1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "connected"
+        assert data["sport"] == "mlb"
 
     def test_create_invalid_sport(self, client):
         resp = client.post("/api/create?sport=nba&num_teams=10&roster_size=15&user_slot=1")

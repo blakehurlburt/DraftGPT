@@ -27,16 +27,20 @@ def compute_replacement_levels(
     num_flex = config.num_flex()
     flex_positions = config.flex_positions()
 
-    # Base starters per position
-    all_positions = ["QB", "RB", "WR", "TE", "K", "DST"]
+    # Base starters per position (derive from config to support NFL + MLB)
+    all_positions = list(dict.fromkeys(
+        list(starters.keys()) + list(config.position_caps.keys())
+    ))
     starter_counts = {pos: starters.get(pos, 0) * num_teams for pos in all_positions}
 
-    # Distribute FLEX slots roughly: ~50% RB, ~40% WR, ~10% TE
-    # K and DST are NOT flex-eligible
+    # Distribute FLEX slots across eligible positions
     total_flex = num_flex * num_teams
-    flex_split = {"RB": 0.5, "WR": 0.4, "TE": 0.1}
+    nfl_flex_split = {"RB": 0.5, "WR": 0.4, "TE": 0.1}
+    # Use NFL weights when applicable, otherwise distribute evenly
+    even_share = 1.0 / len(flex_positions) if flex_positions else 0
     for pos in flex_positions:
-        starter_counts[pos] += int(total_flex * flex_split.get(pos, 0))
+        share = nfl_flex_split.get(pos, even_share)
+        starter_counts[pos] = starter_counts.get(pos, 0) + int(total_flex * share)
 
     # Group players by position
     by_pos: dict[str, list[Player]] = {pos: [] for pos in all_positions}
@@ -76,7 +80,10 @@ def compute_dynamic_replacement_levels(
     starters = config.starter_slots()
     flex_positions = config.flex_positions()
 
-    all_positions = ["QB", "RB", "WR", "TE", "K", "DST"]
+    # Derive from config to support NFL + MLB
+    all_positions = list(dict.fromkeys(
+        list(starters.keys()) + list(config.position_caps.keys())
+    ))
 
     # Remaining starter need per position across all teams
     remaining_need: dict[str, int] = {pos: 0 for pos in all_positions}
@@ -154,7 +161,9 @@ def compute_last_starter_levels(
     """
     starters = config.starter_slots()
     flex_positions = config.flex_positions()
-    all_positions = ["QB", "RB", "WR", "TE", "K", "DST"]
+    all_positions = list(dict.fromkeys(
+        list(starters.keys()) + list(config.position_caps.keys())
+    ))
 
     # Remaining starter need per position across all teams (including FLEX)
     remaining_need: dict[str, int] = {pos: 0 for pos in all_positions}
