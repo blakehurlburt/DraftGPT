@@ -285,6 +285,17 @@
                 connectedSlot = slot;
 
                 initSportUI();
+
+                // Enable/disable Sleeper projection tab based on availability
+                const sleeperProjTab = document.querySelector('.proj-tab[data-proj="sleeper"]');
+                if (sleeperProjTab) {
+                    const available = data.sleeper_projections_available === true;
+                    sleeperProjTab.disabled = !available;
+                    sleeperProjTab.title = available
+                        ? `Sleeper's season-long projections (${data.sleeper_projections_matched || 0} players)`
+                        : "Sleeper projections not available";
+                }
+
                 showConnectedUI(data.draft_id, slot, data);
 
                 // Show manual controls

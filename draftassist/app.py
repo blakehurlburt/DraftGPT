@@ -861,6 +861,17 @@ async def create_manual_draft(
     except FileNotFoundError as e:
         sessions.pop(session_id, None)
         return JSONResponse({"detail": str(e)}, status_code=400)
+
+    # For NFL, fetch Sleeper projections so the projection toggle works
+    sleeper_matched = 0
+    if sport == "nfl":
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                sleeper_proj = await fetch_projections(client)
+            sleeper_matched = attach_sleeper_projections(players, sleeper_proj, scoring=None)
+        except Exception:
+            log.warning("Failed to fetch Sleeper projections for manual draft")
+
     config = default_config_for_sport(sport, num_teams, roster_size)
 
     # Replay saved picks if provided
@@ -914,6 +925,7 @@ async def create_manual_draft(
     sess.adp_platform = "consensus"
     sess.adp_order = _compute_adp_order(players, "consensus", sport=sport)
     sess.last_activity = time.monotonic()
+    sess.sleeper_projections_matched = sleeper_matched
 
     meta = {"status": "complete" if state.is_complete else "in_progress"}
     payload = _build_state_payload(
@@ -941,6 +953,8 @@ async def create_manual_draft(
         "draft_status": meta["status"],
         "mode": "manual",
         "sport": sport,
+        "sleeper_projections_available": sleeper_matched > 0,
+        "sleeper_projections_matched": sleeper_matched,
     })
 
 
