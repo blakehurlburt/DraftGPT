@@ -425,6 +425,12 @@
             dynamicTdClass: (r, ctx) => ctx.floorEstimated ? "range-ceil estimated" : "range-ceil",
         },
         {
+            key: "projected_games", label: "G",
+            title: "Projected games played",
+            hidden: () => draftSport !== "mlb",
+            render: (r) => r.projected_games || "—",
+        },
+        {
             key: "value", label: "VBD", id: "value-header",
             sortKey: "value",
             title: "Composite VBD Score — aggregates VORP + VONA + VOLS",
