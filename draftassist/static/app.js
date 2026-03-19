@@ -83,6 +83,7 @@
             cb.checked = true;
             cb.addEventListener("change", () => {
                 posFilters[cb.checked ? "add" : "delete"](pos);
+                displayCount = 10;
                 if (currentState) renderRecommendations(currentState);
             });
             const chip = document.createElement("span");
@@ -103,6 +104,7 @@
             cb.id = "rookie-only";
             cb.addEventListener("change", (e) => {
                 rookieOnly = e.target.checked;
+                displayCount = 10;
                 if (currentState) renderRecommendations(currentState);
             });
             const chip = document.createElement("span");
@@ -137,6 +139,7 @@
     let totalLoaded = 30;     // how many recs are currently loaded (initial — backend sends 30)
     let displayCount = 10;    // how many rows to show after filtering
     let prefetching = false;
+    let backendExhausted = false;
 
     // Helper to build URL with session_id
     function apiUrl(path, params = {}) {
@@ -610,7 +613,7 @@
 
         // Check if we have enough filtered recs already loaded
         const allRecs = getAllRecsForStrategy(currentStrategy);
-        const availableFiltered = allRecs.filter((r) => posFilters.has(r.position)).length;
+        const availableFiltered = allRecs.filter((r) => posFilters.has(r.position) && (!rookieOnly || r.is_rookie)).length;
 
         if (availableFiltered >= displayCount) {
             // Enough data already loaded, just re-render
@@ -622,7 +625,9 @@
         if (prefetchedRecs && Object.keys(prefetchedRecs).length) {
             _mergeNestedRecs(prefetchedRecs, extraRecs);
             const anyRisk = Object.values(prefetchedRecs)[0] || [];
-            totalLoaded += anyRisk.length || 0;
+            const prefetchCount = anyRisk.length || 0;
+            totalLoaded += prefetchCount;
+            if (prefetchCount < displayCount) backendExhausted = true;
             prefetchedRecs = {};
             renderRecommendations(currentState);
             prefetchMore();
@@ -637,7 +642,9 @@
             const data = await resp.json();
             const moreRecs = data.recommendations || {};
             _mergeNestedRecs(moreRecs, extraRecs);
-            totalLoaded += displayCount;
+            const anyRisk = Object.values(moreRecs)[0] || [];
+            totalLoaded += anyRisk.length;
+            if (anyRisk.length < displayCount) backendExhausted = true;
             renderRecommendations(currentState);
             prefetchMore();
         } catch (err) {
@@ -652,12 +659,13 @@
         prefetchedRecs = {};
         totalLoaded = 30;
         displayCount = 10;
+        backendExhausted = false;
     }
 
     function getVisibleCount() {
         // Count how many rows are currently visible after filtering
         const recs = getAllRecsForStrategy(currentStrategy);
-        return recs.filter((r) => posFilters.has(r.position)).length || 10;
+        return recs.filter((r) => posFilters.has(r.position) && (!rookieOnly || r.is_rookie)).length || 10;
     }
 
     function getAllRecsForStrategy(_strategy) {
@@ -960,7 +968,8 @@
             .join("");
 
         // Show "show more" button when it's our turn and there are more to show
-        if (state.is_my_turn && hasMore) {
+        // (or backend may still have more data for this filter)
+        if (state.is_my_turn && (hasMore || !backendExhausted)) {
             showMoreBtn.classList.remove("hidden");
             showMoreBtn.textContent = `Show ${displayCount} more`;
         } else {
