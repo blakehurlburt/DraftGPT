@@ -96,45 +96,66 @@
         // Keep the label, remove everything else
         while (container.children.length > 1) container.removeChild(container.lastChild);
 
-        positions.forEach((pos) => {
-            const label = document.createElement("label");
-            label.className = "pos-toggle";
-            const cb = document.createElement("input");
-            cb.type = "checkbox";
-            cb.value = pos;
-            cb.checked = true;
-            cb.addEventListener("change", () => {
-                posFilters[cb.checked ? "add" : "delete"](pos);
-                displayCount = 10;
-                if (currentState) renderRecommendations(currentState);
+        function updateChipStyles() {
+            container.querySelectorAll(".pos-chip[data-pos]").forEach((chip) => {
+                chip.classList.toggle("inactive", !posFilters.has(chip.dataset.pos));
             });
+        }
+
+        positions.forEach((pos) => {
             const chip = document.createElement("span");
             chip.className = `pos-chip pos-${pos}`;
             chip.textContent = pos;
-            label.appendChild(cb);
-            label.appendChild(chip);
-            container.appendChild(label);
-        });
-
-        // Rookies toggle — only for NFL
-        if (draftSport !== "mlb") {
-            const label = document.createElement("label");
-            label.className = "pos-toggle";
-            label.id = "rookie-filter";
-            const cb = document.createElement("input");
-            cb.type = "checkbox";
-            cb.id = "rookie-only";
-            cb.addEventListener("change", (e) => {
-                rookieOnly = e.target.checked;
+            chip.dataset.pos = pos;
+            chip.addEventListener("click", (e) => {
+                e.preventDefault();
+                if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                    // Additive toggle
+                    if (posFilters.has(pos)) {
+                        if (posFilters.size > 1) posFilters.delete(pos);
+                    } else {
+                        posFilters.add(pos);
+                    }
+                } else {
+                    // Exclusive: solo this position, or reset to all if already solo
+                    if (posFilters.size === 1 && posFilters.has(pos)) {
+                        posFilters = new Set(positions);
+                    } else {
+                        posFilters = new Set([pos]);
+                    }
+                }
+                updateChipStyles();
                 displayCount = 10;
                 if (currentState) renderRecommendations(currentState);
             });
+            container.appendChild(chip);
+        });
+
+        // "All" button
+        const allChip = document.createElement("span");
+        allChip.className = "pos-chip pos-all";
+        allChip.textContent = "All";
+        allChip.addEventListener("click", () => {
+            posFilters = new Set(positions);
+            updateChipStyles();
+            displayCount = 10;
+            if (currentState) renderRecommendations(currentState);
+        });
+        container.appendChild(allChip);
+
+        // Rookies toggle — only for NFL
+        if (draftSport !== "mlb") {
             const chip = document.createElement("span");
-            chip.className = "pos-chip rookie-chip";
+            chip.className = "pos-chip rookie-chip" + (rookieOnly ? "" : " inactive");
             chip.textContent = "Rookies";
-            label.appendChild(cb);
-            label.appendChild(chip);
-            container.appendChild(label);
+            chip.id = "rookie-filter";
+            chip.addEventListener("click", () => {
+                rookieOnly = !rookieOnly;
+                chip.classList.toggle("inactive", !rookieOnly);
+                displayCount = 10;
+                if (currentState) renderRecommendations(currentState);
+            });
+            container.appendChild(chip);
         }
 
         // Sleeper projection tab — hide for MLB
