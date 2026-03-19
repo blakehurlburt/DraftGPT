@@ -536,6 +536,44 @@ def _build_prior_features_pitcher(df):
 
 
 # ---------------------------------------------------------------------------
+# Step 5b: Add MiLB features (supplemental for players with limited MLB history)
+# ---------------------------------------------------------------------------
+
+def _add_milb_features(df, seasons, player_type="batter"):
+    """Left-join MiLB features onto the main feature DataFrame.
+
+    MiLB features provide signal for players with limited MLB history
+    (rookies, sophomores).  For veterans the model learns to largely
+    ignore them.  Fails gracefully if MiLB data is not available.
+    """
+    try:
+        from .milb_features import build_milb_batter_features, build_milb_pitcher_features
+    except ImportError:
+        return df
+
+    if player_type == "batter":
+        milb_df = build_milb_batter_features(seasons)
+    else:
+        milb_df = build_milb_pitcher_features(seasons)
+
+    if milb_df is None or milb_df.shape[0] == 0:
+        return df
+
+    # Ensure join key types match
+    if "season" in milb_df.columns and milb_df["season"].dtype != df["season"].dtype:
+        milb_df = milb_df.with_columns(pl.col("season").cast(df["season"].dtype))
+
+    df = df.join(milb_df, on=["player_id", "season"], how="left")
+
+    # Fill nulls with 0.0 (no MiLB data = zero signal)
+    milb_cols = [c for c in df.columns if c.startswith("milb_") or c.startswith("draft_")]
+    for col in milb_cols:
+        df = df.with_columns(pl.col(col).fill_null(0.0))
+
+    return df
+
+
+# ---------------------------------------------------------------------------
 # Step 6: Roster context features (team changes, competition)
 # ---------------------------------------------------------------------------
 
@@ -642,6 +680,9 @@ def build_batter_features(seasons):
     print("Building prior-season features...")
     df = _build_prior_features_batter(season_df)
 
+    # Step 5b: MiLB features
+    df = _add_milb_features(df, seasons, player_type="batter")
+
     # Step 6: Roster context
     df = _add_roster_context(df, seasons)
 
@@ -692,6 +733,9 @@ def build_pitcher_features(seasons):
     # Step 5: Build prior-season features
     print("Building prior-season features...")
     df = _build_prior_features_pitcher(season_df)
+
+    # Step 5b: MiLB features
+    df = _add_milb_features(df, seasons, player_type="pitcher")
 
     # Step 6: Roster context
     df = _add_roster_context(df, seasons)
@@ -760,6 +804,7 @@ def build_batter_projection_features(seasons):
     # Append dummy rows and rebuild prior features
     extended = pl.concat([season_df, dummy], how="diagonal")
     extended = _build_prior_features_batter(extended)
+    extended = _add_milb_features(extended, list(seasons) + [proj_year], player_type="batter")
     extended = _add_roster_context(extended, seasons)
     extended = _add_display_names(extended)
 
@@ -822,6 +867,7 @@ def build_pitcher_projection_features(seasons):
     # Append dummy rows and rebuild prior features
     extended = pl.concat([season_df, dummy], how="diagonal")
     extended = _build_prior_features_pitcher(extended)
+    extended = _add_milb_features(extended, list(seasons) + [proj_year], player_type="pitcher")
     extended = _add_roster_context(extended, seasons)
     extended = _add_display_names(extended)
 

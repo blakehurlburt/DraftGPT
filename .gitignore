@@ -8,3 +8,4 @@ build/
 .cache/
 .DS_Store
 data/lahman_1871-2025_csv/
+data/milb_cache/
