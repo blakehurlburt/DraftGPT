@@ -427,7 +427,6 @@
         {
             key: "projected_games", label: "G",
             title: "Projected games played",
-            hidden: () => draftSport !== "mlb",
             render: (r) => r.projected_games || "—",
         },
         {
