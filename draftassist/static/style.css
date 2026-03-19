@@ -601,6 +601,12 @@ th.sortable .sort-arrow {
     opacity: 0.25;
 }
 
+.rookie-chip.inactive {
+    background: transparent;
+    color: #888;
+    opacity: 1;
+}
+
 .pos-chip.pos-all {
     background: #607d8b;
     color: white;
