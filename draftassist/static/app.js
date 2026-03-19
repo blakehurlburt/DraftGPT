@@ -60,6 +60,28 @@
     const NFL_POSITIONS = ["QB", "RB", "WR", "TE"];
     const MLB_POSITIONS = ["C", "1B", "2B", "3B", "SS", "OF", "DH", "SP", "RP"];
 
+    // ── Manual draft pick persistence (localStorage) ─────────────────
+    const MANUAL_PICKS_KEY = "draftgpt_manual_picks";
+
+    function saveManualPicks(state) {
+        if (draftMode !== "manual" || !state.all_picks) return;
+        const names = state.all_picks.map((p) => p.player_name);
+        try {
+            localStorage.setItem(MANUAL_PICKS_KEY, JSON.stringify(names));
+        } catch (_) { /* storage full or unavailable */ }
+    }
+
+    function loadManualPicks() {
+        try {
+            const raw = localStorage.getItem(MANUAL_PICKS_KEY);
+            return raw ? JSON.parse(raw) : [];
+        } catch (_) { return []; }
+    }
+
+    function clearManualPicks() {
+        try { localStorage.removeItem(MANUAL_PICKS_KEY); } catch (_) {}
+    }
+
     /**
      * Rebuild position filter chips, projection/ADP tabs, and column
      * visibility based on the current sport (draftSport).
@@ -225,6 +247,7 @@
             manualStartBtn.disabled = true;
             manualStatus.textContent = "Creating draft...";
             manualStatus.style.color = "";
+            clearManualPicks();  // fresh draft, clear any saved picks
 
             try {
                 const resp = await fetch(
@@ -730,11 +753,50 @@
                 sessionId = null;
             }
 
-            const resp = await fetch(
+            // Check if this was a manual draft (from URL params)
+            const urlParams = new URLSearchParams(window.location.search);
+            const mode = urlParams.get("mode");
+
+            let resp, data;
+            if (mode === "manual") {
+                const sport = urlParams.get("sport") || "nfl";
+                const numTeams = urlParams.get("num_teams") || 12;
+                const rounds = urlParams.get("rounds") || 15;
+                const savedPicks = loadManualPicks();
+                resp = await fetch(
+                    `/api/create?sport=${sport}&num_teams=${numTeams}&roster_size=${rounds}&user_slot=${slot}`,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(savedPicks),
+                    }
+                );
+                data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || "Failed to recreate manual draft");
+
+                sessionId = data.session_id;
+                draftMode = "manual";
+                draftSport = sport;
+                connectedDraftId = data.draft_id;
+                connectedSlot = slot;
+
+                initSportUI();
+                showConnectedUI(data.draft_id, slot, data);
+                manualPickControls.classList.remove("hidden");
+
+                const stateResp = await fetch(apiUrl("/api/state"));
+                const state = await stateResp.json();
+                resetExtraRecs();
+                updateUI(state);
+                startSSE();
+                return;
+            }
+
+            resp = await fetch(
                 `/api/connect?draft_id=${encodeURIComponent(draftId)}&user_slot=${slot}`,
                 { method: "POST" }
             );
-            const data = await resp.json();
+            data = await resp.json();
 
             if (!resp.ok) {
                 throw new Error(data.detail || "Connection failed");
@@ -778,7 +840,14 @@
         url.searchParams.set("draft_id", draftId);
         url.searchParams.set("slot", slot);
         url.searchParams.set("session_id", sessionId);
-        if (draftMode === "manual") url.searchParams.set("mode", "manual");
+        if (draftMode === "manual") {
+            url.searchParams.set("mode", "manual");
+            url.searchParams.set("sport", draftSport || "nfl");
+            if (data) {
+                url.searchParams.set("num_teams", data.num_teams || 12);
+                url.searchParams.set("rounds", data.rounds || 15);
+            }
+        }
         window.history.replaceState({}, "", url);
 
         welcomeScreen.classList.add("hidden");
@@ -858,6 +927,9 @@
 
     function updateUI(state) {
         currentState = state;
+
+        // Persist manual draft picks to localStorage for recovery
+        saveManualPicks(state);
 
         // Sync projection source tab from server state
         if (state.projection_source && state.projection_source !== currentProj) {

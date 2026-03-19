@@ -21,7 +21,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from draftsim.adp import generate_consensus_adp, generate_platform_adp
 from draftsim.config import LeagueConfig
-from draftsim.draft import DraftState
+from draftsim.draft import DraftState, build_snake_order
 from draftsim.players import Player, load_players
 from draftsim.value import compute_dynamic_replacement_levels, compute_replacement_levels, vbd
 
@@ -830,12 +830,26 @@ async def stream(
 
 @app.post("/api/create")
 async def create_manual_draft(
+    request: Request,
     sport: str = Query("nfl", description="Sport: nfl or mlb"),
     num_teams: int = Query(12, ge=4, le=20),
     roster_size: int = Query(15, ge=10, le=25),
     user_slot: int = Query(1, ge=1, le=20, description="1-indexed draft slot"),
 ):
-    """Create a manual draft session (no Sleeper connection)."""
+    """Create a manual draft session (no Sleeper connection).
+
+    Optionally accepts a JSON body with a list of player names to replay
+    (e.g. when restoring a draft after server restart).
+    """
+    # Parse optional pick names from request body
+    pick_names: list[str] = []
+    if request.headers.get("content-type", "").startswith("application/json"):
+        try:
+            body = await request.json()
+            if isinstance(body, list):
+                pick_names = [str(n) for n in body]
+        except Exception:
+            pass
     if sport not in ("nfl", "mlb"):
         return JSONResponse({"detail": f"Unsupported sport: {sport}"}, status_code=400)
 
@@ -849,7 +863,46 @@ async def create_manual_draft(
         sessions.pop(session_id, None)
         return JSONResponse({"detail": str(e)}, status_code=400)
     config = default_config_for_sport(sport, num_teams, roster_size)
-    state = DraftState.create(config, players)
+
+    # Replay saved picks if provided
+    if pick_names:
+        # Build pick dicts from player names so rebuild_from_manual_picks can match
+        picks = []
+        for i, name in enumerate(pick_names):
+            parts = name.split(maxsplit=1)
+            picks.append({
+                "pick_no": i + 1,
+                "metadata": {
+                    "first_name": parts[0] if parts else "",
+                    "last_name": parts[1] if len(parts) > 1 else "",
+                },
+            })
+        state = rebuild_from_manual_picks(config, players, picks)
+        # Build sess.picks in the same format as manual_pick creates
+        sess_picks = []
+        name_lookup = {p.name.lower(): p for p in players}
+        snake_order = build_snake_order(num_teams, roster_size)
+        for i, name in enumerate(pick_names):
+            matched = name_lookup.get(name.lower())
+            pick_no = i + 1
+            round_no = (pick_no - 1) // num_teams + 1
+            draft_slot = snake_order[i] + 1 if i < len(snake_order) else 0  # 1-indexed
+            parts = name.split(maxsplit=1)
+            sess_picks.append({
+                "pick_no": pick_no,
+                "round": round_no,
+                "draft_slot": draft_slot,
+                "player_id": f"manual-{pick_no}",
+                "metadata": {
+                    "first_name": parts[0] if parts else "",
+                    "last_name": parts[1] if len(parts) > 1 else "",
+                    "position": matched.position if matched else "",
+                    "team": matched.team if matched else "",
+                },
+            })
+        sess.picks = sess_picks
+    else:
+        state = DraftState.create(config, players)
 
     slot_0 = user_slot - 1
     sess.mode = "manual"
@@ -863,17 +916,17 @@ async def create_manual_draft(
     sess.adp_order = _compute_adp_order(players, "consensus", sport=sport)
     sess.last_activity = time.monotonic()
 
-    meta = {"status": "in_progress"}
+    meta = {"status": "complete" if state.is_complete else "in_progress"}
     payload = _build_state_payload(
-        state, meta, [], slot_0, players, sess.adp_order,
+        state, meta, sess.picks, slot_0, players, sess.adp_order,
         risk_profile=sess.risk_profile,
         projection_source=sess.projection_source,
     )
     sess.state_payload = payload
 
     log.info(
-        "Created manual %s draft: %d teams, %d rounds, slot %d",
-        sport, num_teams, roster_size, user_slot,
+        "Created manual %s draft: %d teams, %d rounds, slot %d, %d picks restored",
+        sport, num_teams, roster_size, user_slot, len(pick_names),
     )
 
     return JSONResponse({
@@ -883,10 +936,10 @@ async def create_manual_draft(
         "user_slot": user_slot,
         "num_teams": num_teams,
         "rounds": roster_size,
-        "picks_made": 0,
+        "picks_made": len(sess.picks),
         "players_matched": len(players),
         "total_players": len(players),
-        "draft_status": "in_progress",
+        "draft_status": meta["status"],
         "mode": "manual",
         "sport": sport,
     })
