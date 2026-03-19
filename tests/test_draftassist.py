@@ -12,6 +12,8 @@ from draftassist.bridge import (
     config_from_sleeper_meta,
     rebuild_draft_state,
     _make_placeholder,
+    default_config_for_sport,
+    rebuild_from_manual_picks,
 )
 from draftassist.recommender import (
     top_n_picks,
@@ -359,3 +361,126 @@ class TestRookiesInPayload:
             assert "position" in r
             assert "projected_total" in r
             assert "is_rookie" in r and r["is_rookie"] is True
+
+
+# ---------------------------------------------------------------------------
+# bridge.default_config_for_sport
+# ---------------------------------------------------------------------------
+
+class TestDefaultConfigForSport:
+    def test_nfl_defaults(self):
+        config = default_config_for_sport("nfl")
+        assert config.num_teams == 12
+        assert config.roster_size == 15
+        assert config.lineup["QB"] == 1
+        assert config.lineup["RB"] == 2
+        assert config.lineup["WR"] == 2
+        assert "FLEX" in config.lineup
+        assert config.flex_positions() == ["RB", "WR", "TE"]
+
+    def test_nfl_custom_size(self):
+        config = default_config_for_sport("nfl", num_teams=10, roster_size=20)
+        assert config.num_teams == 10
+        assert config.roster_size == 20
+
+    def test_mlb_defaults(self):
+        config = default_config_for_sport("mlb")
+        assert config.num_teams == 12
+        assert config.lineup["C"] == 1
+        assert config.lineup["SP"] == 2
+        assert config.lineup["RP"] == 2
+        assert config.lineup["OF"] == 3
+        assert "FLEX" in config.lineup  # UTIL slot
+        # UTIL should be eligible for all batters
+        assert "C" in config.flex_positions()
+        assert "OF" in config.flex_positions()
+
+    def test_mlb_custom_size(self):
+        config = default_config_for_sport("mlb", num_teams=8, roster_size=22)
+        assert config.num_teams == 8
+        assert config.roster_size == 22
+
+
+# ---------------------------------------------------------------------------
+# bridge.rebuild_from_manual_picks
+# ---------------------------------------------------------------------------
+
+class TestRebuildFromManualPicks:
+    def test_replays_picks(self, sample_players, small_config):
+        p1, p2 = sample_players[0], sample_players[1]
+        picks = [
+            {"pick_no": 1, "metadata": {
+                "first_name": p1.name.split()[0],
+                "last_name": " ".join(p1.name.split()[1:]),
+                "position": p1.position, "team": p1.team}},
+            {"pick_no": 2, "metadata": {
+                "first_name": p2.name.split()[0],
+                "last_name": " ".join(p2.name.split()[1:]),
+                "position": p2.position, "team": p2.team}},
+        ]
+        state = rebuild_from_manual_picks(small_config, sample_players, picks)
+        assert state.current_pick == 2
+        assert p1 in state.teams[0]
+        assert p2 in state.teams[1]
+
+    def test_empty_picks(self, sample_players, small_config):
+        state = rebuild_from_manual_picks(small_config, sample_players, [])
+        assert state.current_pick == 0
+        assert len(state.available) == len(sample_players)
+
+    def test_undo_replay(self, sample_players, small_config):
+        """Simulates undo by replaying with one fewer pick."""
+        p1, p2 = sample_players[0], sample_players[1]
+        picks = [
+            {"pick_no": 1, "metadata": {
+                "first_name": p1.name.split()[0],
+                "last_name": " ".join(p1.name.split()[1:]),
+                "position": p1.position, "team": p1.team}},
+            {"pick_no": 2, "metadata": {
+                "first_name": p2.name.split()[0],
+                "last_name": " ".join(p2.name.split()[1:]),
+                "position": p2.position, "team": p2.team}},
+        ]
+        # Full replay
+        state_full = rebuild_from_manual_picks(small_config, sample_players, picks)
+        assert state_full.current_pick == 2
+
+        # Undo: replay without last pick
+        state_undo = rebuild_from_manual_picks(small_config, sample_players, picks[:1])
+        assert state_undo.current_pick == 1
+        assert p2 in state_undo.available
+
+
+# ---------------------------------------------------------------------------
+# config.LeagueConfig.flex_eligible
+# ---------------------------------------------------------------------------
+
+class TestFlexEligible:
+    def test_default_nfl_flex(self):
+        config = LeagueConfig()
+        assert config.flex_positions() == ["RB", "WR", "TE"]
+
+    def test_custom_flex(self):
+        config = LeagueConfig(flex_eligible=["C", "1B", "2B", "3B", "SS", "OF", "DH"])
+        assert "C" in config.flex_positions()
+        assert "DH" in config.flex_positions()
+
+
+# ---------------------------------------------------------------------------
+# Manual draft state payload
+# ---------------------------------------------------------------------------
+
+class TestManualPayload:
+    def test_build_payload_manual(self, sample_players, small_config):
+        """Payload should work with manual-mode synthetic meta."""
+        from draftassist.app import _build_state_payload
+
+        state = DraftState.create(small_config, sample_players)
+        meta = {"status": "in_progress"}
+        payload = _build_state_payload(
+            state, meta, [], user_slot=0,
+            players=sample_players, skip_recommendations=False,
+        )
+        assert payload["draft_status"] == "in_progress"
+        assert payload["current_pick"] == 1
+        assert payload["num_teams"] == small_config.num_teams

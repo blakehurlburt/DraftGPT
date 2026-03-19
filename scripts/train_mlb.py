@@ -143,6 +143,39 @@ def main():
 
     print_rankings(pit_results, "Pitcher", positions=["SP", "RP"])
 
+    # --- Save combined projections CSV for draft assistant ---
+    output_path = Path(__file__).parent.parent / "data" / "projections" / "mlb_projections.csv"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Combine batters and pitchers
+    combined = pl.concat([bat_results, pit_results])
+
+    # Filter to positive projections only
+    combined = combined.filter(pl.col("projected_total") > 0)
+
+    # Rename columns to match the expected schema
+    rename_map = {}
+    if "ppg_floor" in combined.columns:
+        rename_map["ppg_floor"] = "ppg_floor_raw"
+    if "ppg_ceiling" in combined.columns:
+        rename_map["ppg_ceiling"] = "ppg_ceiling_raw"
+    if rename_map:
+        combined = combined.rename(rename_map)
+
+    # Add total_floor / total_ceiling from quantile columns if available
+    if "total_floor" not in combined.columns:
+        combined = combined.with_columns(pl.lit(0).alias("total_floor"))
+    if "total_ceiling" not in combined.columns:
+        combined = combined.with_columns(pl.lit(0).alias("total_ceiling"))
+
+    # Select and write
+    out_cols = ["player_display_name", "position_group", "team",
+                "projected_ppg", "projected_games", "projected_total",
+                "pos_rank", "total_floor", "total_ceiling"]
+    available_out = [c for c in out_cols if c in combined.columns]
+    combined.select(available_out).sort("projected_total", descending=True).write_csv(str(output_path))
+    print(f"\nSaved {combined.shape[0]} projections to {output_path}")
+
     print("\nDone!")
 
 

@@ -20,12 +20,17 @@ from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
 from draftsim.adp import generate_consensus_adp, generate_platform_adp
+from draftsim.config import LeagueConfig
+from draftsim.draft import DraftState
 from draftsim.players import Player, load_players
 from draftsim.value import compute_dynamic_replacement_levels, compute_replacement_levels, vbd
 
 from draftsim.live_sim import SimSnapshot, run_live_simulation
 
-from .bridge import build_player_index, config_from_sleeper_meta, rebuild_draft_state
+from .bridge import (
+    build_player_index, config_from_sleeper_meta, rebuild_draft_state,
+    default_config_for_sport, rebuild_from_manual_picks,
+)
 from .recommender import get_recommendations
 from .sleeper import fetch_all_players, fetch_draft_meta, fetch_draft_picks
 
@@ -61,6 +66,12 @@ class DraftSession:
     sim_task: asyncio.Task | None = None
     sim_cancel: asyncio.Event = field(default_factory=asyncio.Event)
     sim_snapshot: dict | None = None
+    # Manual draft mode
+    mode: str = "sleeper"  # "sleeper" or "manual"
+    sport: str = "nfl"
+    picks: list[dict] = field(default_factory=list)  # manual mode picks
+    draft_state: DraftState | None = None  # live state for manual mode
+    config: LeagueConfig | None = None  # league config for manual mode
 
 
 sessions: dict[str, DraftSession] = {}
@@ -318,6 +329,29 @@ def _refresh_state(sess: DraftSession, picks):
     return payload
 
 
+async def _get_picks_and_config(sess: DraftSession):
+    """Return (picks, config) from either manual state or Sleeper API."""
+    if sess.mode == "manual":
+        return sess.picks, sess.config
+    async with httpx.AsyncClient(timeout=10) as client:
+        picks = await fetch_draft_picks(client, sess.draft_id)
+    return picks, config_from_sleeper_meta(sess.meta)
+
+
+def _refresh_manual_state(sess: DraftSession):
+    """Rebuild manual draft state from picks and update session payload."""
+    state = rebuild_from_manual_picks(sess.config, sess.players, sess.picks)
+    sess.draft_state = state
+    meta = {"status": "complete" if state.is_complete else "in_progress"}
+    payload = _build_state_payload(
+        state, meta, sess.picks,
+        sess.user_slot, sess.players, sess.adp_order,
+        risk_profile=sess.risk_profile,
+    )
+    sess.state_payload = payload
+    return state, payload
+
+
 def _push_to_subscribers(sess: DraftSession, payload):
     """Push payload to all SSE subscriber queues."""
     dead = []
@@ -562,10 +596,12 @@ async def set_adp_platform(
     sess.adp_order = _compute_adp_order(sess.players, platform)
 
     # Rebuild current state payload with new ADP
-    async with httpx.AsyncClient(timeout=10) as client:
-        picks = await fetch_draft_picks(client, sess.draft_id)
-
-    _refresh_state(sess, picks)
+    if sess.mode == "manual":
+        _refresh_manual_state(sess)
+    else:
+        async with httpx.AsyncClient(timeout=10) as client:
+            picks = await fetch_draft_picks(client, sess.draft_id)
+        _refresh_state(sess, picks)
 
     return JSONResponse({"status": "ok", "platform": platform})
 
@@ -587,10 +623,12 @@ async def set_risk_profile(
     sess.risk_profile = profile
 
     # Rebuild current state payload with new risk profile
-    async with httpx.AsyncClient(timeout=10) as client:
-        picks = await fetch_draft_picks(client, sess.draft_id)
-
-    _refresh_state(sess, picks)
+    if sess.mode == "manual":
+        _refresh_manual_state(sess)
+    else:
+        async with httpx.AsyncClient(timeout=10) as client:
+            picks = await fetch_draft_picks(client, sess.draft_id)
+        _refresh_state(sess, picks)
 
     return JSONResponse({"status": "ok", "profile": profile})
 
@@ -606,11 +644,14 @@ async def get_more_recommendations(
     if not sess.connected:
         return JSONResponse({"error": "Not connected to a draft"}, status_code=400)
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        picks = await fetch_draft_picks(client, sess.draft_id)
-
-    config = config_from_sleeper_meta(sess.meta)
-    state = rebuild_draft_state(config, sess.players, picks, sess.id_to_player)
+    if sess.mode == "manual":
+        picks, config = sess.picks, sess.config
+        state = rebuild_from_manual_picks(config, sess.players, picks)
+    else:
+        async with httpx.AsyncClient(timeout=10) as client:
+            picks = await fetch_draft_picks(client, sess.draft_id)
+        config = config_from_sleeper_meta(sess.meta)
+        state = rebuild_draft_state(config, sess.players, picks, sess.id_to_player)
 
     slot = sess.user_slot
     if state.is_complete or state.current_team_idx != slot:
@@ -658,8 +699,9 @@ async def get_state(
     sess = _get_session(session_id)
     if not sess.connected:
         return JSONResponse({"error": "Not connected to a draft"}, status_code=400)
-    # Make sure poll is still running
-    _ensure_poll_running(sess)
+    # Make sure poll is still running (Sleeper mode only)
+    if sess.mode == "sleeper":
+        _ensure_poll_running(sess)
     return JSONResponse(sess.state_payload)
 
 
@@ -685,8 +727,9 @@ async def stream(
     sess.subscribers.append(queue)
     log.info("SSE subscriber connected (total: %d)", len(sess.subscribers))
 
-    # Make sure poll is running
-    _ensure_poll_running(sess)
+    # Make sure poll is running (Sleeper mode only)
+    if sess.mode == "sleeper":
+        _ensure_poll_running(sess)
 
     async def event_generator():
         try:
@@ -710,6 +753,198 @@ async def stream(
             log.info("SSE subscriber disconnected (remaining: %d)", len(sess.subscribers))
 
     return EventSourceResponse(event_generator())
+
+
+@app.post("/api/create")
+async def create_manual_draft(
+    sport: str = Query("nfl", description="Sport: nfl or mlb"),
+    num_teams: int = Query(12, ge=4, le=20),
+    roster_size: int = Query(15, ge=10, le=25),
+    user_slot: int = Query(1, ge=1, le=20, description="1-indexed draft slot"),
+):
+    """Create a manual draft session (no Sleeper connection)."""
+    session_id = str(uuid.uuid4())
+    sess = DraftSession()
+    sessions[session_id] = sess
+
+    players = load_players(sport=sport)
+    config = default_config_for_sport(sport, num_teams, roster_size)
+    state = DraftState.create(config, players)
+
+    slot_0 = user_slot - 1
+    sess.mode = "manual"
+    sess.sport = sport
+    sess.user_slot = slot_0
+    sess.players = players
+    sess.config = config
+    sess.draft_state = state
+    sess.connected = True
+    sess.adp_platform = "consensus"
+    sess.adp_order = _compute_adp_order(players, "consensus") if sport == "nfl" else []
+    sess.last_activity = time.monotonic()
+
+    meta = {"status": "in_progress"}
+    payload = _build_state_payload(
+        state, meta, [], slot_0, players, sess.adp_order,
+        risk_profile=sess.risk_profile,
+    )
+    sess.state_payload = payload
+
+    log.info(
+        "Created manual %s draft: %d teams, %d rounds, slot %d",
+        sport, num_teams, roster_size, user_slot,
+    )
+
+    return JSONResponse({
+        "status": "connected",
+        "session_id": session_id,
+        "draft_id": f"manual-{session_id[:8]}",
+        "user_slot": user_slot,
+        "num_teams": num_teams,
+        "rounds": roster_size,
+        "picks_made": 0,
+        "players_matched": len(players),
+        "total_players": len(players),
+        "draft_status": "in_progress",
+        "mode": "manual",
+        "sport": sport,
+    })
+
+
+@app.post("/api/pick")
+async def manual_pick(
+    session_id: str = Query(...),
+    player_name: str = Query(..., description="Exact player name"),
+):
+    """Enter a pick in manual draft mode."""
+    sess = _get_session(session_id)
+    if sess.mode != "manual":
+        return JSONResponse({"error": "Not a manual draft"}, status_code=400)
+    if sess.draft_state is None or sess.draft_state.is_complete:
+        return JSONResponse({"error": "Draft is complete"}, status_code=400)
+
+    # Find player by exact name (case-insensitive)
+    target = player_name.lower()
+    matched = None
+    for p in sess.draft_state.available:
+        if p.name.lower() == target:
+            matched = p
+            break
+
+    if matched is None:
+        return JSONResponse({"error": f"Player '{player_name}' not found in available pool"}, status_code=404)
+
+    state = sess.draft_state
+    pick_no = state.current_pick + 1
+    current_round = state.current_round
+    draft_slot = state.current_team_idx + 1  # 1-indexed
+
+    state.make_pick(matched)
+
+    # Build Sleeper-compatible pick dict
+    name_parts = matched.name.split(maxsplit=1)
+    pick_dict = {
+        "pick_no": pick_no,
+        "round": current_round,
+        "draft_slot": draft_slot,
+        "player_id": f"manual-{pick_no}",
+        "metadata": {
+            "first_name": name_parts[0] if name_parts else "",
+            "last_name": name_parts[1] if len(name_parts) > 1 else "",
+            "position": matched.position,
+            "team": matched.team,
+        },
+    }
+    sess.picks.append(pick_dict)
+
+    # Cancel any running sim
+    await _cancel_sim(sess)
+
+    # Rebuild payload
+    meta = {"status": "complete" if state.is_complete else "in_progress"}
+    payload = _build_state_payload(
+        state, meta, sess.picks,
+        sess.user_slot, sess.players, sess.adp_order,
+        risk_profile=sess.risk_profile,
+    )
+    sess.state_payload = payload
+    _push_to_subscribers(sess, payload)
+
+    # Start sim if user picks within 3 picks
+    if not state.is_complete:
+        picks_until = state.picks_until_next(sess.user_slot)
+        if picks_until <= 3:
+            _start_sim(sess, state)
+
+    return JSONResponse({
+        "status": "ok",
+        "pick_no": pick_no,
+        "player_name": matched.name,
+        "position": matched.position,
+    })
+
+
+@app.post("/api/undo")
+async def undo_pick(
+    session_id: str = Query(...),
+):
+    """Undo the last pick in manual draft mode."""
+    sess = _get_session(session_id)
+    if sess.mode != "manual":
+        return JSONResponse({"error": "Not a manual draft"}, status_code=400)
+    if not sess.picks:
+        return JSONResponse({"error": "No picks to undo"}, status_code=400)
+
+    sess.picks.pop()
+
+    await _cancel_sim(sess)
+
+    # Rebuild state from remaining picks
+    state, payload = _refresh_manual_state(sess)
+
+    _push_to_subscribers(sess, payload)
+
+    return JSONResponse({
+        "status": "ok",
+        "picks_remaining": len(sess.picks),
+    })
+
+
+@app.get("/api/search")
+async def search_players(
+    session_id: str = Query(...),
+    q: str = Query(..., min_length=1),
+    limit: int = Query(10, ge=1, le=50),
+):
+    """Search available players by name substring."""
+    sess = _get_session(session_id)
+    if not sess.connected:
+        return JSONResponse({"error": "Not connected to a draft"}, status_code=400)
+
+    # Use manual state or rebuild from Sleeper
+    if sess.mode == "manual" and sess.draft_state:
+        available = sess.draft_state.available
+    else:
+        picks, config = await _get_picks_and_config(sess)
+        state = rebuild_draft_state(config, sess.players, picks, sess.id_to_player)
+        available = state.available
+
+    query = q.lower()
+    results = []
+    for p in sorted(available, key=lambda p: p.projected_total, reverse=True):
+        if query in p.name.lower():
+            results.append({
+                "name": p.name,
+                "position": p.position,
+                "team": p.team,
+                "projected_total": round(p.projected_total, 1),
+                "bye_week": p.bye_week,
+                "is_rookie": p.is_rookie,
+            })
+            if len(results) >= limit:
+                break
+
+    return JSONResponse({"results": results})
 
 
 @app.get("/", response_class=HTMLResponse)

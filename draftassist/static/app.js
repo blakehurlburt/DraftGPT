@@ -53,6 +53,8 @@
     let simData = null;  // latest sim snapshot
     let simCollapsed = false;
     let rosterSort = null;  // null = draft order, or {key, asc}
+    let draftMode = "sleeper";  // "sleeper" or "manual"
+    let draftSport = "nfl";     // "nfl" or "mlb"
 
     // Extra recommendations fetched via "show more"
     let extraRecs = {};       // strategy -> array of additional recs
@@ -91,6 +93,157 @@
         const trailingMatch = trimmed.match(/\/(\d{10,})(?:[/?#]|$)/);
         if (trailingMatch) return trailingMatch[1];
         return trimmed;
+    }
+
+    // ── Mode tabs (welcome screen) ─────────────────────────────────
+    const sleeperForm = $("#sleeper-form");
+    const manualForm = $("#manual-form");
+    const manualStartBtn = $("#manual-start-btn");
+    const manualStatus = $("#manual-status");
+    const pickSearchInput = $("#pick-search-input");
+    const pickSearchResults = $("#pick-search-results");
+    const undoBtn = $("#undo-btn");
+    const manualPickControls = $("#manual-pick-controls");
+
+    $$(".mode-tab").forEach((tab) => {
+        tab.addEventListener("click", () => {
+            $$(".mode-tab").forEach((t) => t.classList.remove("active"));
+            tab.classList.add("active");
+            const mode = tab.dataset.mode;
+            if (mode === "sleeper") {
+                sleeperForm.classList.remove("hidden");
+                manualForm.classList.add("hidden");
+            } else {
+                sleeperForm.classList.add("hidden");
+                manualForm.classList.remove("hidden");
+            }
+        });
+    });
+
+    // Manual draft creation
+    if (manualStartBtn) {
+        manualStartBtn.addEventListener("click", async () => {
+            const sport = document.querySelector('input[name="sport"]:checked')?.value || "nfl";
+            const numTeams = parseInt($("#manual-teams").value, 10) || 12;
+            const rosterSize = parseInt($("#manual-rounds").value, 10) || 15;
+            const slot = parseInt($("#manual-slot").value, 10) || 1;
+
+            manualStartBtn.disabled = true;
+            manualStatus.textContent = "Creating draft...";
+            manualStatus.style.color = "";
+
+            try {
+                const resp = await fetch(
+                    `/api/create?sport=${sport}&num_teams=${numTeams}&roster_size=${rosterSize}&user_slot=${slot}`,
+                    { method: "POST" }
+                );
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || "Failed to create draft");
+
+                sessionId = data.session_id;
+                draftMode = "manual";
+                draftSport = sport;
+                connectedDraftId = data.draft_id;
+                connectedSlot = slot;
+
+                showConnectedUI(data.draft_id, slot, data);
+
+                // Show manual controls
+                manualPickControls.classList.remove("hidden");
+
+                const stateResp = await fetch(apiUrl("/api/state"));
+                const state = await stateResp.json();
+                resetExtraRecs();
+                updateUI(state);
+                startSSE();
+            } catch (err) {
+                manualStatus.textContent = `Error: ${err.message}`;
+                manualStatus.style.color = "#ff5252";
+            } finally {
+                manualStartBtn.disabled = false;
+            }
+        });
+    }
+
+    // ── Manual pick search ──────────────────────────────────────────
+    let searchDebounce = null;
+
+    if (pickSearchInput) {
+        pickSearchInput.addEventListener("input", () => {
+            clearTimeout(searchDebounce);
+            const q = pickSearchInput.value.trim();
+            if (q.length < 2) {
+                pickSearchResults.classList.add("hidden");
+                return;
+            }
+            searchDebounce = setTimeout(async () => {
+                try {
+                    const resp = await fetch(apiUrl("/api/search", { q, limit: 10 }));
+                    const data = await resp.json();
+                    renderSearchResults(data.results || []);
+                } catch (err) {
+                    console.error("Search failed:", err);
+                }
+            }, 200);
+        });
+
+        // Close dropdown on click outside
+        document.addEventListener("click", (e) => {
+            if (!e.target.closest(".pick-search-wrapper")) {
+                pickSearchResults.classList.add("hidden");
+            }
+        });
+    }
+
+    function renderSearchResults(results) {
+        if (!results.length) {
+            pickSearchResults.innerHTML = '<div class="search-empty">No players found</div>';
+            pickSearchResults.classList.remove("hidden");
+            return;
+        }
+        pickSearchResults.innerHTML = results.map((r) =>
+            `<div class="search-result" data-name="${r.name.replace(/"/g, '&quot;')}">
+                <span class="pos-badge pos-${r.position}">${r.position}</span>
+                <span class="search-result-name">${r.name}</span>
+                <span class="search-result-team">${r.team}</span>
+                <span class="search-result-pts">${r.projected_total}</span>
+            </div>`
+        ).join("");
+        pickSearchResults.classList.remove("hidden");
+
+        // Bind click handlers
+        pickSearchResults.querySelectorAll(".search-result").forEach((el) => {
+            el.addEventListener("click", () => makePick(el.dataset.name));
+        });
+    }
+
+    async function makePick(playerName) {
+        pickSearchResults.classList.add("hidden");
+        pickSearchInput.value = "";
+        try {
+            const resp = await fetch(
+                apiUrl("/api/pick", { player_name: playerName }),
+                { method: "POST" }
+            );
+            const data = await resp.json();
+            if (!resp.ok) {
+                console.error("Pick failed:", data.error);
+            }
+        } catch (err) {
+            console.error("Pick error:", err);
+        }
+    }
+
+    if (undoBtn) {
+        undoBtn.addEventListener("click", async () => {
+            try {
+                const resp = await fetch(apiUrl("/api/undo"), { method: "POST" });
+                const data = await resp.json();
+                if (!resp.ok) console.error("Undo failed:", data.error);
+            } catch (err) {
+                console.error("Undo error:", err);
+            }
+        });
     }
 
     // ── Column definitions ───────────────────────────────────────────
@@ -481,6 +634,7 @@
         url.searchParams.set("draft_id", draftId);
         url.searchParams.set("slot", slot);
         url.searchParams.set("session_id", sessionId);
+        if (draftMode === "manual") url.searchParams.set("mode", "manual");
         window.history.replaceState({}, "", url);
 
         welcomeScreen.classList.add("hidden");
@@ -490,6 +644,11 @@
         headerTeams.textContent = data ? `${data.num_teams} teams` : "";
         statusBar.classList.remove("hidden");
         mainContent.classList.remove("hidden");
+
+        // Show manual pick controls if manual mode
+        if (draftMode === "manual") {
+            manualPickControls.classList.remove("hidden");
+        }
     }
 
     // Connect button click (welcome screen)
@@ -553,11 +712,20 @@
             picksUntil.textContent = "Draft Complete";
         } else if (state.is_my_turn) {
             turnIndicator.classList.remove("hidden");
-            picksUntil.textContent = "On the clock!";
-            sendTurnNotification();
+            if (draftMode === "manual") {
+                picksUntil.textContent = "Your turn — search and pick!";
+            } else {
+                picksUntil.textContent = "On the clock!";
+                sendTurnNotification();
+            }
         } else {
             turnIndicator.classList.add("hidden");
-            picksUntil.textContent = `${state.picks_until_next} picks until your turn`;
+            const teamNum = (state.current_team ?? -1) + 1;
+            if (draftMode === "manual" && teamNum > 0) {
+                picksUntil.textContent = `Pick ${state.current_pick}: Team ${teamNum}'s turn (${state.picks_until_next} until yours)`;
+            } else {
+                picksUntil.textContent = `${state.picks_until_next} picks until your turn`;
+            }
         }
 
         renderRecommendations(state);

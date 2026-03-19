@@ -874,6 +874,179 @@ td.sim-value {
     color: #fff;
 }
 
+/* Mode tabs (welcome screen) */
+.mode-tabs {
+    display: flex;
+    gap: 0;
+    margin-bottom: 24px;
+    border: 1px solid #2d3d4f;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.mode-tab {
+    flex: 1;
+    background: #0f1923;
+    color: #6b7c8d;
+    border: none;
+    padding: 10px 16px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background 0.15s, color 0.15s;
+}
+
+.mode-tab:hover { color: #8899aa; }
+
+.mode-tab.active {
+    background: #1e2d3d;
+    color: #4fc3f7;
+}
+
+/* Sport selector */
+.sport-selector {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.sport-radio {
+    cursor: pointer;
+}
+
+.sport-radio input[type="radio"] { display: none; }
+
+.sport-chip {
+    display: inline-block;
+    padding: 6px 16px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    background: #0f1923;
+    color: #6b7c8d;
+    border: 1px solid #2d3d4f;
+    transition: all 0.15s;
+}
+
+.sport-radio input:checked + .sport-chip {
+    background: #1e2d3d;
+    color: #4fc3f7;
+    border-color: #4fc3f7;
+}
+
+#manual-start-btn {
+    background: #4fc3f7;
+    color: #0f1923;
+    border: none;
+    padding: 12px 20px;
+    border-radius: 6px;
+    font-weight: 700;
+    cursor: pointer;
+    font-size: 16px;
+    margin-top: 12px;
+}
+
+#manual-start-btn:hover { background: #81d4fa; }
+#manual-start-btn:disabled { background: #2d3d4f; color: #6b7c8d; cursor: default; }
+
+#manual-status {
+    font-size: 13px;
+    color: #6b7c8d;
+    text-align: center;
+    min-height: 20px;
+}
+
+/* Manual pick entry controls */
+#manual-pick-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#manual-pick-controls.hidden { display: none; }
+
+.pick-search-wrapper {
+    position: relative;
+}
+
+#pick-search-input {
+    background: #0f1923;
+    border: 1px solid #2d3d4f;
+    color: #e0e6ed;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 14px;
+    width: 260px;
+}
+
+#pick-search-input:focus {
+    outline: none;
+    border-color: #4fc3f7;
+}
+
+.pick-search-results {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    width: 360px;
+    max-height: 320px;
+    overflow-y: auto;
+    background: #1a2733;
+    border: 1px solid #2d3d4f;
+    border-radius: 6px;
+    z-index: 100;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+
+.pick-search-results.hidden { display: none; }
+
+.search-result {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    border-bottom: 1px solid #1e2d3d;
+}
+
+.search-result:hover { background: rgba(79, 195, 247, 0.1); }
+
+.search-result-name { font-weight: 600; flex: 1; }
+.search-result-team { color: #6b7c8d; }
+.search-result-pts { color: #8899aa; font-size: 12px; }
+
+.search-empty {
+    padding: 12px;
+    text-align: center;
+    color: #4a5a6a;
+    font-style: italic;
+}
+
+.undo-btn {
+    background: #0f1923;
+    color: #ff5252;
+    border: 1px solid #2d3d4f;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.undo-btn:hover { border-color: #ff5252; background: rgba(255,82,82,0.1); }
+
+/* MLB position badges */
+.pos-C { background: #9c27b0; color: white; }
+.pos-1B { background: #4caf50; color: white; }
+.pos-2B { background: #2196f3; color: white; }
+.pos-3B { background: #ff9800; color: white; }
+.pos-SS { background: #e91e63; color: white; }
+.pos-OF { background: #00bcd4; color: white; }
+.pos-DH { background: #607d8b; color: white; }
+.pos-SP { background: #f44336; color: white; }
+.pos-RP { background: #795548; color: white; }
+
 /* Responsive */
 @media (max-width: 900px) {
     main { flex-direction: column; }

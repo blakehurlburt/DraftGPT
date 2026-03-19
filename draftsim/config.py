@@ -20,6 +20,10 @@ class LeagueConfig:
     position_caps: dict = field(
         default_factory=lambda: {"QB": 3, "RB": 6, "WR": 6, "TE": 3, "K": 2, "DST": 2}
     )
+    # Positions eligible for FLEX slots
+    flex_eligible: list = field(
+        default_factory=lambda: ["RB", "WR", "TE"]
+    )
 
     @property
     def num_rounds(self) -> int:
@@ -35,7 +39,7 @@ class LeagueConfig:
 
     def flex_positions(self) -> list[str]:
         """Positions eligible for FLEX."""
-        return ["RB", "WR", "TE"]
+        return self.flex_eligible
 
     def num_flex(self) -> int:
         return self.lineup.get("FLEX", 0)

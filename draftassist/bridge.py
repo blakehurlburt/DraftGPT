@@ -1,4 +1,7 @@
-"""Maps Sleeper draft data to draftsim DraftState."""
+"""Maps draft data to draftsim DraftState.
+
+Handles both Sleeper API data and manual draft mode.
+"""
 
 from __future__ import annotations
 
@@ -185,6 +188,74 @@ def rebuild_draft_state(
             state.make_pick(matched)
         else:
             # Unmatched player — create placeholder and inject into available
+            placeholder = _make_placeholder(pick)
+            state.available.append(placeholder)
+            state.make_pick(placeholder)
+
+    return state
+
+
+def default_config_for_sport(
+    sport: str, num_teams: int = 12, roster_size: int = 15,
+) -> LeagueConfig:
+    """Build a LeagueConfig with sport-appropriate defaults."""
+    if sport == "mlb":
+        lineup = {
+            "C": 1, "1B": 1, "2B": 1, "3B": 1, "SS": 1,
+            "OF": 3, "FLEX": 1, "SP": 2, "RP": 2,
+        }
+        position_caps = {
+            "C": 3, "1B": 3, "2B": 3, "3B": 3, "SS": 3,
+            "OF": 6, "SP": 6, "RP": 4, "DH": 2,
+        }
+        # UTIL slot: all batters eligible
+        flex_eligible = ["C", "1B", "2B", "3B", "SS", "OF", "DH"]
+        return LeagueConfig(
+            num_teams=num_teams,
+            roster_size=roster_size,
+            lineup=lineup,
+            position_caps=position_caps,
+            flex_eligible=flex_eligible,
+        )
+    # NFL defaults
+    lineup = {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "FLEX": 1, "K": 1, "DST": 1}
+    return LeagueConfig(
+        num_teams=num_teams,
+        roster_size=roster_size,
+        lineup=lineup,
+    )
+
+
+def rebuild_from_manual_picks(
+    config: LeagueConfig,
+    players: list[Player],
+    picks: list[dict],
+) -> DraftState:
+    """Create DraftState and replay manual picks by player name.
+
+    Each pick dict has metadata.first_name / metadata.last_name (or a
+    combined player_name key) used to match against the player pool.
+    """
+    state = DraftState.create(config, list(players))
+
+    # Build name lookup for fast matching
+    name_lookup: dict[str, Player] = {}
+    for p in players:
+        name_lookup[p.name.lower()] = p
+
+    sorted_picks = sorted(picks, key=lambda p: p.get("pick_no", 0))
+
+    for pick in sorted_picks:
+        if state.is_complete:
+            break
+        meta = pick.get("metadata", {})
+        pname = f"{meta.get('first_name', '')} {meta.get('last_name', '')}".strip()
+        matched = name_lookup.get(pname.lower())
+
+        if matched and matched in state.available:
+            state.make_pick(matched)
+        else:
+            # Create placeholder for unknown picks
             placeholder = _make_placeholder(pick)
             state.available.append(placeholder)
             state.make_pick(placeholder)

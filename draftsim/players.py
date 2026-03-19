@@ -37,23 +37,40 @@ class Player:
         return f"{self.name} ({self.position}{self.pos_rank}, {self.team}) {self.projected_total:.0f}pts"
 
 
+_NFL_POSITIONS = {"QB", "RB", "WR", "TE", "K", "DST"}
+_MLB_POSITIONS = {"C", "1B", "2B", "3B", "SS", "OF", "SP", "RP", "DH"}
+
+
 def load_players(
-    projections_path: str | Path = "data/projections/all_projections.csv",
+    projections_path: str | Path | None = None,
     min_total: float = 20.0,
+    sport: str = "nfl",
 ) -> list[Player]:
     """Load player projections from CSV into Player objects.
 
     Args:
-        projections_path: Path to all_projections.csv
+        projections_path: Path to projections CSV. Defaults per sport.
         min_total: Minimum projected total points to include
+        sport: "nfl" or "mlb"
 
     Returns:
         List of Player objects sorted by projected_total descending
     """
+    if projections_path is None:
+        if sport == "mlb":
+            projections_path = "data/projections/mlb_projections.csv"
+        else:
+            projections_path = "data/projections/all_projections.csv"
+
+    valid_positions = _MLB_POSITIONS if sport == "mlb" else _NFL_POSITIONS
+
     players = []
     path = Path(projections_path)
     if not path.exists():
-        raise FileNotFoundError(f"Projections file not found: {path}")
+        raise FileNotFoundError(
+            f"Projections file not found: {path}. "
+            + ("Run scripts/train_mlb.py to generate MLB projections." if sport == "mlb" else "")
+        )
 
     with open(path, newline="") as f:
         reader = csv.DictReader(f)
@@ -62,9 +79,9 @@ def load_players(
             if total < min_total:
                 continue
             position = row["position_group"]
-            if position not in ("QB", "RB", "WR", "TE", "K", "DST"):
+            if position not in valid_positions:
                 continue
-            raw_team = row.get("current_team", "") or ""
+            raw_team = row.get("current_team", "") or row.get("team", "") or ""
             team = _TEAM_NORMALIZE.get(raw_team, raw_team)
             players.append(
                 Player(
@@ -77,19 +94,20 @@ def load_players(
                     pos_rank=int(row["pos_rank"]),
                     total_floor=float(row.get("total_floor", 0)),
                     total_ceiling=float(row.get("total_ceiling", 0)),
-                    is_rookie=not raw_team,  # combine-sourced rookies have no team
+                    is_rookie=not raw_team if sport == "nfl" else False,
                 )
             )
 
     players.sort(key=lambda p: p.projected_total, reverse=True)
 
-    # Assign bye weeks from ADP CSV
-    from .adp import load_bye_weeks
-    try:
-        bye_weeks = load_bye_weeks()
-        for p in players:
-            p.bye_week = bye_weeks.get(p.team, 0)
-    except FileNotFoundError:
-        pass  # ADP file missing — leave bye_week as 0
+    # Assign bye weeks from ADP CSV (NFL only)
+    if sport == "nfl":
+        from .adp import load_bye_weeks
+        try:
+            bye_weeks = load_bye_weeks()
+            for p in players:
+                p.bye_week = bye_weeks.get(p.team, 0)
+        except FileNotFoundError:
+            pass  # ADP file missing — leave bye_week as 0
 
     return players
