@@ -1,8 +1,8 @@
 """Fetch MiLB stats from the MLB Stats API and cache locally.
 
 Populates data/milb_cache/ with player rosters, year-by-year stats,
-and draft data.  Designed to be run once (takes ~30-60 min for a full
-10-year window) and then incrementally for new seasons.
+and draft data.  Only fetches stats for fantasy-relevant players
+(AAA, AA, and MLB-level) to keep runtime reasonable (~30-45 min).
 
 Usage:
     python scripts/fetch_milb.py [--start-year 2015] [--end-year 2025]
@@ -24,48 +24,71 @@ from mlbdata.milb_api import (
 )
 from mlbdata.id_mapping import build_id_map, save_id_map
 
+# Only fetch rosters from these levels — AAA and MLB are where
+# fantasy-relevant players are.  AA is included to capture top
+# prospects a year or two out.
+ROSTER_LEVELS = ["AAA", "AA", "MLB"]
 
-def collect_player_ids(seasons: range, verbose: bool = True) -> set[int]:
-    """Collect all unique MLB API player IDs across MiLB levels and seasons."""
-    all_ids: set[int] = set()
+# For per-player stats, fetch these MiLB levels.
+STAT_LEVELS = ["AAA", "AA", "High-A", "Single-A"]
 
-    levels = {k: v for k, v in SPORT_IDS.items() if k != "MLB"}
-    tasks = [(level, sport_id, season)
-             for level, sport_id in levels.items()
+
+def collect_player_ids(seasons: range, verbose: bool = True) -> dict[int, str]:
+    """Collect unique MLB API player IDs from fantasy-relevant levels.
+
+    Returns:
+        Dict mapping player_id -> primary position type ("pitcher" or "hitter").
+    """
+    players_info: dict[int, str] = {}
+
+    tasks = [(level, SPORT_IDS[level], season)
+             for level in ROSTER_LEVELS
              for season in seasons]
 
     if verbose:
         print(f"\nStep 1: Collecting player rosters ({len(tasks)} level-season combos)...")
 
+    pitcher_pos = {"P", "SP", "RP", "TWP"}
     for level, sport_id, season in tqdm(tasks, desc="Rosters", disable=not verbose):
         try:
             players = fetch_players_at_level(sport_id, season)
             for p in players:
                 pid = p.get("id")
-                if pid:
-                    all_ids.add(pid)
+                if not pid or pid in players_info:
+                    continue
+                pos = p.get("primaryPosition", {}).get("abbreviation", "")
+                ptype = "pitcher" if pos in pitcher_pos else "hitter"
+                players_info[pid] = ptype
         except Exception as e:
             if verbose:
                 tqdm.write(f"  Warning: {level} {season} failed: {e}")
 
     if verbose:
-        print(f"  Unique MiLB players: {len(all_ids)}")
+        hitters = sum(1 for v in players_info.values() if v == "hitter")
+        pitchers = sum(1 for v in players_info.values() if v == "pitcher")
+        print(f"  Unique players: {len(players_info)} ({hitters} hitters, {pitchers} pitchers)")
 
-    return all_ids
+    return players_info
 
 
-def fetch_all_stats(player_ids: set[int], verbose: bool = True):
-    """Fetch year-by-year stats for all players (both hitting and pitching)."""
+def fetch_all_stats(players_info: dict[int, str], verbose: bool = True):
+    """Fetch year-by-year stats for all players.
+
+    Uses player position to only fetch the relevant stat group
+    (hitting OR pitching), cutting API calls in half.
+    """
     if verbose:
-        print(f"\nStep 2: Fetching stats for {len(player_ids)} players...")
+        print(f"\nStep 2: Fetching stats for {len(players_info)} players...")
+        print(f"  Levels: {STAT_LEVELS}")
+        est_calls = len(players_info) * len(STAT_LEVELS)
+        est_time = est_calls * 0.15 / 60
+        print(f"  Estimated: ~{est_calls} API calls, ~{est_time:.0f} min")
 
-    for pid in tqdm(sorted(player_ids), desc="Stats", disable=not verbose):
+    for pid in tqdm(sorted(players_info.keys()), desc="Stats", disable=not verbose):
+        ptype = players_info[pid]
+        group = "pitching" if ptype == "pitcher" else "hitting"
         try:
-            fetch_player_stats(pid, group="hitting")
-        except Exception:
-            pass
-        try:
-            fetch_player_stats(pid, group="pitching")
+            fetch_player_stats(pid, group=group, levels=STAT_LEVELS)
         except Exception:
             pass
 
@@ -100,12 +123,12 @@ def main():
     seasons = range(args.start_year, args.end_year + 1)
     print(f"Fetching MiLB data for {args.start_year}-{args.end_year}")
 
-    # Step 1: Collect all player IDs from rosters
-    player_ids = collect_player_ids(seasons)
+    # Step 1: Collect player IDs from AA+ rosters
+    players_info = collect_player_ids(seasons)
 
     # Step 2: Fetch per-player stats
     if not args.skip_stats:
-        fetch_all_stats(player_ids)
+        fetch_all_stats(players_info)
     else:
         print("\nSkipping per-player stats (--skip-stats)")
 

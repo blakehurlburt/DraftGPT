@@ -38,7 +38,7 @@ LEVEL_RANK = {
 SPORT_ID_TO_LEVEL = {v: k for k, v in SPORT_IDS.items()}
 
 # Delay between API requests (seconds)
-_REQUEST_DELAY = 0.2
+_REQUEST_DELAY = 0.1
 
 
 def _ensure_cache():
@@ -82,15 +82,18 @@ def fetch_players_at_level(sport_id: int, season: int) -> list[dict]:
 # Player year-by-year stats
 # ---------------------------------------------------------------------------
 
-def fetch_player_stats(mlb_api_id: int, group: str = "hitting") -> list[dict]:
-    """Fetch year-by-year stats for a player across ALL levels.
-
-    The API requires separate calls per sport level, so we iterate
-    through MLB + all MiLB levels and merge the results.
+def fetch_player_stats(
+    mlb_api_id: int,
+    group: str = "hitting",
+    levels: list[str] | None = None,
+) -> list[dict]:
+    """Fetch year-by-year stats for a player across specified levels.
 
     Args:
         mlb_api_id: MLB Stats API person ID.
         group: "hitting" or "pitching".
+        levels: Which levels to fetch (e.g. ["AAA", "AA"]).
+                Defaults to all levels.
 
     Returns:
         List of stat split dicts, each with keys like:
@@ -102,8 +105,12 @@ def fetch_player_stats(mlb_api_id: int, group: str = "hitting") -> list[dict]:
     if cache_path.exists():
         return json.loads(cache_path.read_text())
 
+    fetch_levels = levels or list(SPORT_IDS.keys())
     all_splits = []
-    for level_name, sport_id in SPORT_IDS.items():
+    for level_name in fetch_levels:
+        sport_id = SPORT_IDS.get(level_name)
+        if sport_id is None:
+            continue
         try:
             data = _get(
                 f"{BASE_URL}/people/{mlb_api_id}/stats",
