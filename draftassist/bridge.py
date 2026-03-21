@@ -286,15 +286,11 @@ def attach_sleeper_projections(
         if pts <= 0:
             continue
 
-        # Estimate games from Sleeper stats or fall back to model
-        games = float(stats.get("gp", 0) or stats.get("games", 0) or 0)
-        games_known = games > 0 or p.projected_games > 0
-        if games <= 0:
-            # Use model value if available; fall back to 17 only for PPG math
-            games = p.projected_games if p.projected_games > 0 else 17.0
+        # Keep our model's projected games — Sleeper doesn't project GP
+        games = p.projected_games if p.projected_games > 0 else 17.0
 
         p.sleeper_projected_total = pts
-        p.sleeper_projected_games = games if games_known else 0.0
+        p.sleeper_projected_games = games
         p.sleeper_projected_ppg = pts / games if games > 0 else 0.0
         matched += 1
 
@@ -431,7 +427,7 @@ def swap_projection_source(players: list[Player], source: str) -> None:
             if p.sleeper_projected_total > 0:
                 p.projected_total = p.sleeper_projected_total
                 p.projected_ppg = p.sleeper_projected_ppg
-                p.projected_games = p.sleeper_projected_games
+                # Keep model's projected_games — Sleeper doesn't project GP
                 fr, cr = pos_ratios.get(p.position, (0.7, 1.3))
                 p.total_floor = round(p.projected_total * fr, 1)
                 p.total_ceiling = round(p.projected_total * cr, 1)
