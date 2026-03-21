@@ -277,12 +277,7 @@ def _pick_probability(
     round_frac = (current_round - 1) / max(total_rounds - 1, 1)
     spread = 3.0 + 9.0 * round_frac          # 3 early → 12 late
     midpoint = gap_size - 1                   # picks that happen in the gap
-    # CR opus: When gap_size == 1 (one opponent picks before our next turn), midpoint=0
-    # CR opus: and this returns 0.0, meaning we predict zero chance anyone is taken. But
-    # CR opus: gap_size=1 means one pick DOES happen. This makes VONA always return 0.0
-    # CR opus: when there's only one pick between our turns (e.g., in a 2-team draft or
-    # CR opus: near the turn in a snake draft). The fix: change to `if midpoint < 0`.
-    if midpoint <= 0:
+    if midpoint < 0:
         return 0.0
     x = (adp_position - midpoint) / max(spread, 0.1)
     return 1.0 / (1.0 + math.exp(x))         # high when adp_position < midpoint

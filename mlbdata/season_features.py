@@ -193,14 +193,10 @@ def _build_pitcher_seasons(seasons):
         pl.when(pl.col("BFP") > 0)
         .then(pl.col("BB") / pl.col("BFP"))
         .otherwise(0.0).alias("BB_rate"),
-        # CR opus: FIP formula omits HBP — standard FIP is (13*HR + 3*(BB+HBP) - 2*K)/IP + constant.
-        # CR opus: Missing HBP systematically underestimates FIP for pitchers who hit many
-        # CR opus: batters (~0.1-0.3 FIP impact for high-HBP pitchers). Also, the FIP constant
-        # CR opus: 3.2 is approximate — varies by year from ~3.10 to ~3.20.
-        # FIP: (13*HR + 3*BB - 2*K)/IP + 3.2 (constant approximation)
+        # FIP: (13*HR + 3*(BB+HBP) - 2*K)/IP + 3.2 (constant approximation)
         pl.when(pl.col("IP") > 0)
         .then(
-            (13.0 * pl.col("HR") + 3.0 * pl.col("BB") - 2.0 * pl.col("SO"))
+            (13.0 * pl.col("HR") + 3.0 * (pl.col("BB") + pl.col("HBP").fill_null(0)) - 2.0 * pl.col("SO"))
             / pl.col("IP") + 3.2
         ).otherwise(None).alias("FIP"),
         # Per-game rates
@@ -379,15 +375,14 @@ def _build_prior_features_batter(df):
     """Build prior-season features for batters."""
     df = df.sort(["player_id", "season"])
 
-    # CR opus: Unlike NFL season_features._build_prior_features(), this function does NOT
-    # CR opus: validate season gaps. shift(1) gives the previous row's stats regardless
-    # CR opus: of how many years apart they are. With EXCLUDED_SEASONS={2020}, a player's
-    # CR opus: 2021 row gets 2019 stats as "prior1" (correct — 2020 excluded), but
-    # CR opus: shift(2) for 2021 gives 2018 stats. The "2-year avg" is then (2019+2018)/2
-    # CR opus: and the "trend" is 2019-2018, spanning 3 calendar years. More importantly,
-    # CR opus: for a player who missed 2019 entirely (injury) and played 2018 and 2021,
-    # CR opus: shift(1) gives 2018 stats as if they were from the immediately prior year.
-    # CR opus: Consider adding season gap validation like the NFL pipeline does.
+    # Track shifted seasons to validate consecutive-year gaps
+    # (excluded seasons like 2020 are already filtered out of the dataframe,
+    # so valid gaps are exactly 1 between adjacent rows for a player)
+    df = df.with_columns([
+        pl.col("season").shift(1).over("player_id").alias("_prior1_season"),
+        pl.col("season").shift(2).over("player_id").alias("_prior2_season"),
+    ])
+
     # Stats to lag
     rate_stats = [
         "ppg", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP",
@@ -407,38 +402,71 @@ def _build_prior_features_batter(df):
     )
     df = df.with_columns(prior1_exprs)
 
+    # Null out prior1 features when season gap > 1 (player missed a full year)
+    # For excluded seasons (2020), the rows are already removed so adjacent rows
+    # spanning 2019→2021 have a gap of 2 in calendar years but are truly consecutive.
+    # We need to account for excluded seasons in the gap check.
+    _excluded = EXCLUDED_SEASONS
+    def _expected_gap(s1, s2):
+        """Count non-excluded years between s1 and s2."""
+        return sum(1 for y in range(s1 + 1, s2 + 1) if y not in _excluded)
+
+    # Compute expected gap: for most rows it's 1, but 2019→2021 is also valid (2020 excluded)
+    _gap1_valid = pl.col("_prior1_season").is_not_null()
+    # Simple check: gap should equal number of non-excluded years
+    # Since 2020 is the only excluded year, gap of 2 is valid only if it spans 2020
+    _gap1_valid = _gap1_valid & (
+        (pl.col("season") - pl.col("_prior1_season") == 1)
+        | (
+            (pl.col("season") - pl.col("_prior1_season") == 2)
+            & pl.col("_prior1_season").is_in(
+                [y - 1 for y in _excluded]  # e.g., 2019 (prior) → 2021 (current) spans 2020
+            )
+        )
+    )
+    _prior1_cols = [f"prior1_{s}" for s in rate_stats if f"prior1_{s}" in df.columns] + ["prior_games_played"]
+    df = df.with_columns([
+        pl.when(_gap1_valid).then(pl.col(c)).otherwise(None).alias(c)
+        for c in _prior1_cols if c in df.columns
+    ])
+
     # --- Prior 2-year average ---
     # When only 1 prior season exists (sophomore), fall back to prior1 value
-    # CR opus: The .over("player_id") inside the .then() branch applies the window
-    # CR opus: ONLY to the then-expression, but the .when() condition also uses
-    # CR opus: .over("player_id") separately. In recent polars versions this can cause
-    # CR opus: "different groups" errors. Safer to compute the shifted columns first
-    # CR opus: and then do the when/then on the pre-computed columns.
+    _gap2_valid = _gap1_valid & pl.col("_prior2_season").is_not_null()
     avg2_stats = ["ppg", "AVG", "OBP", "SLG", "OPS", "ISO", "hr_pg", "rbi_pg", "sb_pg"]
     prior2_exprs = []
     for stat in avg2_stats:
         if stat in df.columns:
             prior2_exprs.append(
-                pl.when(pl.col(stat).shift(2).over("player_id").is_not_null())
+                pl.when(
+                    _gap2_valid & pl.col(stat).shift(2).over("player_id").is_not_null()
+                )
                 .then(
                     ((pl.col(stat).shift(1) + pl.col(stat).shift(2)) / 2.0)
                     .over("player_id")
                 )
-                .otherwise(pl.col(stat).shift(1).over("player_id"))
+                .otherwise(
+                    pl.when(_gap1_valid)
+                    .then(pl.col(stat).shift(1).over("player_id"))
+                    .otherwise(None)
+                )
                 .alias(f"{stat}_2yr")
             )
     df = df.with_columns(prior2_exprs)
 
     # --- Trajectory (year-over-year change) ---
-    # 0.0 when only 1 prior season exists (no trend measurable)
+    # Null when gap is invalid or only 1 prior season exists
     trend_stats = ["ppg", "OPS", "hr_pg", "sb_pg", "K_rate", "BB_rate"]
     trend_exprs = []
     for stat in trend_stats:
         if stat in df.columns:
             trend_exprs.append(
-                (pl.col(stat).shift(1) - pl.col(stat).shift(2))
-                .over("player_id")
-                .fill_null(0.0)
+                pl.when(_gap2_valid)
+                .then(
+                    (pl.col(stat).shift(1) - pl.col(stat).shift(2))
+                    .over("player_id")
+                )
+                .otherwise(0.0)
                 .alias(f"{stat}_trend")
             )
     df = df.with_columns(trend_exprs)
@@ -482,10 +510,15 @@ def _build_prior_features_batter(df):
     return df
 
 
-# CR opus: Same season-gap validation issue as _build_prior_features_batter above.
 def _build_prior_features_pitcher(df):
     """Build prior-season features for pitchers."""
     df = df.sort(["player_id", "season"])
+
+    # Track shifted seasons for gap validation
+    df = df.with_columns([
+        pl.col("season").shift(1).over("player_id").alias("_prior1_season"),
+        pl.col("season").shift(2).over("player_id").alias("_prior2_season"),
+    ])
 
     rate_stats = [
         "ppg", "ERA", "WHIP", "K9", "BB9", "HR9", "FIP",
@@ -505,33 +538,58 @@ def _build_prior_features_pitcher(df):
     )
     df = df.with_columns(prior1_exprs)
 
+    # Null out prior1 features when season gap is invalid
+    _gap1_valid = pl.col("_prior1_season").is_not_null() & (
+        (pl.col("season") - pl.col("_prior1_season") == 1)
+        | (
+            (pl.col("season") - pl.col("_prior1_season") == 2)
+            & pl.col("_prior1_season").is_in(
+                [y - 1 for y in EXCLUDED_SEASONS]
+            )
+        )
+    )
+    _prior1_cols = [f"prior1_{s}" for s in rate_stats if f"prior1_{s}" in df.columns] + ["prior_games_played"]
+    df = df.with_columns([
+        pl.when(_gap1_valid).then(pl.col(c)).otherwise(None).alias(c)
+        for c in _prior1_cols if c in df.columns
+    ])
+
     # --- Prior 2-year average ---
-    # When only 1 prior season exists, fall back to prior1 value
+    _gap2_valid = _gap1_valid & pl.col("_prior2_season").is_not_null()
     avg2_stats = ["ppg", "ERA", "WHIP", "K9", "FIP", "w_pg", "sv_pg"]
     prior2_exprs = []
     for stat in avg2_stats:
         if stat in df.columns:
             prior2_exprs.append(
-                pl.when(pl.col(stat).shift(2).over("player_id").is_not_null())
+                pl.when(
+                    _gap2_valid & pl.col(stat).shift(2).over("player_id").is_not_null()
+                )
                 .then(
                     ((pl.col(stat).shift(1) + pl.col(stat).shift(2)) / 2.0)
                     .over("player_id")
                 )
-                .otherwise(pl.col(stat).shift(1).over("player_id"))
+                .otherwise(
+                    pl.when(_gap1_valid)
+                    .then(pl.col(stat).shift(1).over("player_id"))
+                    .otherwise(None)
+                )
                 .alias(f"{stat}_2yr")
             )
     df = df.with_columns(prior2_exprs)
 
     # --- Trajectory ---
-    # 0.0 when only 1 prior season exists
+    # Null when gap is invalid; 0.0 when only 1 prior season exists
     trend_stats = ["ppg", "ERA", "WHIP", "K9", "K_rate"]
     trend_exprs = []
     for stat in trend_stats:
         if stat in df.columns:
             trend_exprs.append(
-                (pl.col(stat).shift(1) - pl.col(stat).shift(2))
-                .over("player_id")
-                .fill_null(0.0)
+                pl.when(_gap2_valid)
+                .then(
+                    (pl.col(stat).shift(1) - pl.col(stat).shift(2))
+                    .over("player_id")
+                )
+                .otherwise(0.0)
                 .alias(f"{stat}_trend")
             )
     df = df.with_columns(trend_exprs)
@@ -841,14 +899,12 @@ def build_batter_projection_features(seasons):
     dummy = players_latest.with_columns(pl.lit(proj_year).alias("season"))
 
     # Null out current-season stats (targets we don't have yet)
-    # CR opus: id_cols is missing metadata columns that should be preserved:
-    # CR opus: age, years_exp, height, weight, bats_code, throws_code, park_factor.
-    # CR opus: These all get nulled out, causing the projection to lose key features.
-    # CR opus: Since _add_player_metadata is NOT re-run on the extended dataframe,
-    # CR opus: the age+1 and years_exp+1 bumps on lines 861-863 are no-ops (null + 1 = null).
-    # CR opus: This means EVERY batter projection has null age and years_exp features,
-    # CR opus: which is a significant signal loss for age curves and experience effects.
-    id_cols = {"player_id", "season", "player_display_name", "position_group", "team"}
+    # Keep identity and metadata columns that are needed for projection features
+    id_cols = {
+        "player_id", "season", "player_display_name", "position_group", "team",
+        "age", "years_exp", "height", "weight", "bats_code", "throws_code",
+        "park_factor",
+    }
     stat_cols = [c for c in dummy.columns if c not in id_cols]
     dummy = dummy.with_columns(
         [pl.lit(None).cast(dummy[c].dtype).alias(c) for c in stat_cols]
@@ -880,11 +936,6 @@ def build_batter_projection_features(seasons):
         pl.lit(0.0).alias("target_total"),
     ])
 
-    # CR opus: `age` and `years_exp` are nulled out on line 800 (they're in stat_cols,
-    # CR opus: not id_cols), and _add_player_metadata is NOT re-run on `extended`. So
-    # CR opus: these columns are null here, and null + 1.0 = null. The projection rows
-    # CR opus: will always have age=null and years_exp=null. Fix: either exclude age/
-    # CR opus: years_exp from stat_cols, or re-run _add_player_metadata on `extended`.
     # Bump age and years_exp by 1 for projection year
     if "age" in proj.columns:
         proj = proj.with_columns((pl.col("age") + 1.0).alias("age"))
@@ -919,12 +970,12 @@ def build_pitcher_projection_features(seasons):
     players_latest = season_df.filter(pl.col("season") == max_season)
     dummy = players_latest.with_columns(pl.lit(proj_year).alias("season"))
 
-    # Null out current-season stats
-    # CR opus: Same as batter projections — id_cols is missing metadata columns
-    # CR opus: (age, years_exp, height, weight, etc.) so they get nulled out.
-    # CR opus: Pitcher projections lose age/experience features entirely (null + 1 = null).
-    # CR opus: Fix: add metadata cols to id_cols, or re-run _add_player_metadata after concat.
-    id_cols = {"player_id", "season", "player_display_name", "position_group", "team"}
+    # Null out current-season stats (keep identity + metadata for projection)
+    id_cols = {
+        "player_id", "season", "player_display_name", "position_group", "team",
+        "age", "years_exp", "height", "weight", "bats_code", "throws_code",
+        "park_factor",
+    }
     stat_cols = [c for c in dummy.columns if c not in id_cols]
     dummy = dummy.with_columns(
         [pl.lit(None).cast(dummy[c].dtype).alias(c) for c in stat_cols]
@@ -952,9 +1003,6 @@ def build_pitcher_projection_features(seasons):
         pl.lit(0.0).alias("target_total"),
     ])
 
-    # CR opus: Same bug as batter projections — age and years_exp are null here
-    # CR opus: because they were nulled in the dummy rows and _add_player_metadata
-    # CR opus: is not re-run. These +1 operations are no-ops on null values.
     # Bump age and years_exp by 1
     if "age" in proj.columns:
         proj = proj.with_columns((pl.col("age") + 1.0).alias("age"))

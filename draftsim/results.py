@@ -17,13 +17,11 @@ def compute_optimal_lineup(roster: list[Player], config: LeagueConfig) -> tuple[
     starters = config.starter_slots()
     flex_count = config.num_flex()
 
-    # Group roster by position
-    # CR opus: Hardcoded NFL positions. MLB positions (C, 1B, 2B, etc.) will be silently
-    # CR opus: dropped, making compute_optimal_lineup return an empty lineup for MLB drafts.
-    # CR opus: Should derive position keys from config or the roster itself.
-    # CR opus: Since simulation results drive strategy comparisons, this means MLB draft
-    # CR opus: simulations always return total=0, making all strategies look equivalent.
-    by_pos: dict[str, list[Player]] = {"QB": [], "RB": [], "WR": [], "TE": [], "K": [], "DST": []}
+    # Group roster by position (derive from config + roster, not hardcoded)
+    all_positions = set(starters.keys()) | set(config.flex_positions())
+    for p in roster:
+        all_positions.add(p.position)
+    by_pos: dict[str, list[Player]] = {pos: [] for pos in all_positions}
     for p in roster:
         if p.position in by_pos:
             by_pos[p.position].append(p)

@@ -187,8 +187,8 @@ def _aggregate_to_season(seasons):
     # Filter to regular season only, weeks 1-17
     if "season_type" in stats.columns:
         stats = stats.filter(pl.col("season_type") == "REG")
-    # CR opus: Same week <= 17 issue as kicker/DST — drops week 18 regular-season
-    # games (2021+). Should use week <= 18, or dynamically derive from schedule.
+    # Intentionally stop at week 17: week 18 games are irrelevant for fantasy
+    # (starters often rest / play limited snaps) and would add noise to projections.
     stats = stats.filter(pl.col("week") <= 17)
 
     # Filter to offensive skill positions

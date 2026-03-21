@@ -1,62 +1,64 @@
 """Fantasy baseball scoring systems.
 
 Provides configurable point values for converting raw stats to fantasy points.
-Default is a standard ESPN-style points league.
+Default is Yahoo points league scoring.
+
+Batter scoring uses explicit 1B/2B/3B/HR weights (NOT an "H" catchall)
+so home runs aren't double-counted.
 """
 
-# Standard ESPN points league scoring
+# Yahoo points league scoring — batters
+# Uses explicit hit types: 1B (singles), 2B, 3B, HR
 BATTER_POINTS = {
-    "R": 1,
-    "HR": 4,
-    "RBI": 1,
-    "SB": 2,
-    "CS": -1,
-    "BB": 1,
-    "HBP": 1,
-    "H": 1,       # singles, doubles, triples, HRs each get base hit point
-    "2B": 1,      # extra point for doubles (total 2 per double)
-    "3B": 2,      # extra points for triples (total 3 per triple)
-    # CR opus: HR gets H(1) + HR(4) = 5 points total. A triple gets H(1) + 3B(2) = 3.
-    # CR opus: In standard ESPN scoring, HR is worth 4 total, not 5. If H already
-    # CR opus: includes HR, then the HR weight should be 3 (extra-base bonus), not 4.
-    # CR opus: This over-values HR hitters by ~1 point per HR across the season (e.g.,
-    # CR opus: a 40-HR player gets 40 extra phantom points). Since HR is a key stat,
-    # CR opus: this distorts projections meaningfully.
-    # HR extra point handled via HR weight above
-    "SO": -0.5,
-    "GIDP": -0.5,
+    "1B": 2.6,
+    "2B": 5.2,
+    "3B": 7.8,
+    "HR": 10.4,
+    "R": 1.9,
+    "RBI": 1.9,
+    "BB": 2.6,
+    "SB": 4.2,
+    "HBP": 2.6,
 }
 
+# Yahoo points league scoring — pitchers
 PITCHER_POINTS = {
-    "W": 5,
-    "L": -3,
-    "SV": 5,
-    "SO": 1,       # strikeouts by pitcher
+    "SV": 8,
+    "W": 8,
+    "SO": 3,       # strikeouts by pitcher
+    "ER": -3,
     "IPouts": 1,   # 1 point per out recorded (3 per IP)
-    "ER": -2,
-    "H": -0.5,     # hits allowed
-    "BB": -1,      # walks allowed
-    "HBP": -0.5,
-    "CG": 3,
-    "SHO": 3,      # bonus on top of CG
+    "BB": -1.3,
+    "H": -1.3,     # hits allowed
+    "HBP": -1.3,
 }
 
 
 def compute_batter_fpts(row: dict, scoring: dict = None) -> float:
-    """Compute fantasy points for a batter season from a dict of raw stats."""
+    """Compute fantasy points for a batter season from a dict of raw stats.
+
+    Computes singles (1B) as H - 2B - 3B - HR to avoid double-counting.
+    """
     s = scoring or BATTER_POINTS
     pts = 0.0
+
+    # Compute singles from hits minus extra-base hits
+    h = row.get("H", 0)
+    doubles = row.get("2B", 0)
+    triples = row.get("3B", 0)
+    hr = row.get("HR", 0)
+    singles = h - doubles - triples - hr
+
+    pts += singles * s.get("1B", 0)
+    pts += doubles * s.get("2B", 0)
+    pts += triples * s.get("3B", 0)
+    pts += hr * s.get("HR", 0)
     pts += row.get("R", 0) * s.get("R", 0)
-    pts += row.get("HR", 0) * s.get("HR", 0)
     pts += row.get("RBI", 0) * s.get("RBI", 0)
-    pts += row.get("SB", 0) * s.get("SB", 0)
-    pts += row.get("CS", 0) * s.get("CS", 0)
     pts += row.get("BB", 0) * s.get("BB", 0)
+    pts += row.get("SB", 0) * s.get("SB", 0)
     pts += row.get("HBP", 0) * s.get("HBP", 0)
-    pts += row.get("H", 0) * s.get("H", 0)
-    # Extra-base hit bonuses (on top of base H point)
-    pts += row.get("2B", 0) * s.get("2B", 0)
-    pts += row.get("3B", 0) * s.get("3B", 0)
+    pts += row.get("CS", 0) * s.get("CS", 0)
     pts += row.get("SO", 0) * s.get("SO", 0)
     pts += row.get("GIDP", 0) * s.get("GIDP", 0)
     return pts

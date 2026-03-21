@@ -80,8 +80,8 @@ def _aggregate_dst_to_season(seasons):
 
     if "season_type" in ts.columns:
         ts = ts.filter(pl.col("season_type") == "REG")
-    # CR opus: Same as kicker_features — hardcoded week <= 17 excludes week 18
-    # games that have existed since 2021. This drops real regular-season games.
+    # Intentionally stop at week 17: week 18 is irrelevant for fantasy
+    # (starters often rest / play limited snaps) and would add noise.
     ts = ts.filter(pl.col("week") <= 17)
 
     # Normalize team abbreviations
@@ -100,26 +100,15 @@ def _aggregate_dst_to_season(seasons):
     opp_scoring = ts.select([
         pl.col("team").alias("_join_team"),
         "season", "week",
-        # CR opus: TWO bugs in pts_allowed calculation:
-        # CR opus: 1. Double-counts PATs: (passing_tds + rushing_tds) * 7 already includes
-        # CR opus:    the assumed extra point (6+1=7), but pat_made * 1 adds it again.
-        # CR opus:    This inflates pts_allowed by ~3-5 points per game.
-        # CR opus: 2. def_tds and def_safeties are SCORED BY this team's defense, not
-        # CR opus:    points scored by the opponent's offense. Including them as "opponent
-        # CR opus:    offensive points" inflates pts_allowed further. For DSTs with good
-        # CR opus:    defenses (who score more def_tds), this paradoxically penalizes their
-        # CR opus:    own pts_allowed tier score.
-        # CR opus: Combined, a team allowing 21 real points could show as 27-30 pts_allowed,
-        # CR opus: pushing it into a worse fantasy tier (-1 instead of 0).
+        # Opponent offensive points: TDs * 6 (PATs counted separately) + FGs + PATs + 2PTs
+        # Excludes def_tds/def_safeties — those are scored BY this team, not against it
         (
-            (pl.col("passing_tds").fill_null(0) + pl.col("rushing_tds").fill_null(0)) * 7
+            (pl.col("passing_tds").fill_null(0) + pl.col("rushing_tds").fill_null(0)) * 6
             + pl.col("fg_made").fill_null(0) * 3
             + pl.col("pat_made").fill_null(0)
             + (pl.col("passing_2pt_conversions").fill_null(0)
                + pl.col("rushing_2pt_conversions").fill_null(0)
                + pl.col("receiving_2pt_conversions").fill_null(0)) * 2
-            + pl.col("def_tds").fill_null(0) * 6
-            + pl.col("def_safeties").fill_null(0) * 2
         ).alias("_opp_pts"),
     ])
     ts = ts.join(

@@ -19,80 +19,90 @@ from mlbdata.loader import normalize_team_code, TEAM_CODE_MAP
 # ---------------------------------------------------------------------------
 
 class TestBatterFantasyScoring:
-    def test_basic_scoring(self):
-        row = {"R": 1, "HR": 1, "RBI": 1, "H": 1}
-        # R=1, HR=4, RBI=1, H=1 = 7
-        assert compute_batter_fpts(row) == 7.0
+    def test_single(self):
+        # A single: H=1, no extra-base hits → 1B = H-2B-3B-HR = 1
+        row = {"H": 1}
+        # 1B * 2.6 = 2.6
+        assert compute_batter_fpts(row) == 2.6
+
+    def test_home_run_not_double_counted(self):
+        # HR: H=1 includes the HR, so 1B = 1-0-0-1 = 0 singles
+        row = {"H": 1, "HR": 1, "R": 1, "RBI": 1}
+        # HR=10.4, R=1.9, RBI=1.9, 1B=0 → 14.2
+        assert abs(compute_batter_fpts(row) - 14.2) < 0.01
 
     def test_empty_row(self):
         assert compute_batter_fpts({}) == 0.0
 
     def test_stolen_bases(self):
-        row = {"SB": 5, "CS": 2}
-        # 5*2 + 2*-1 = 8
-        assert compute_batter_fpts(row) == 8.0
-
-    def test_negative_stats(self):
-        row = {"SO": 100, "GIDP": 20}
-        # 100*-0.5 + 20*-0.5 = -60
-        assert compute_batter_fpts(row) == -60.0
+        row = {"SB": 5}
+        # 5 * 4.2 = 21.0
+        assert compute_batter_fpts(row) == 21.0
 
     def test_extra_base_hits(self):
-        # A double: H=1 + 2B=1 = 2 pts
+        # A double: H=1, 2B=1 → 1B = 1-1-0-0 = 0, 2B*5.2 = 5.2
         row = {"H": 1, "2B": 1}
-        assert compute_batter_fpts(row) == 2.0
-        # A triple: H=1 + 3B=2 = 3 pts
+        assert compute_batter_fpts(row) == 5.2
+        # A triple: H=1, 3B=1 → 1B = 1-0-1-0 = 0, 3B*7.8 = 7.8
         row = {"H": 1, "3B": 1}
-        assert compute_batter_fpts(row) == 3.0
+        assert compute_batter_fpts(row) == 7.8
 
     def test_custom_scoring(self):
-        row = {"HR": 1}
-        custom = {"HR": 10}
+        row = {"HR": 1, "H": 1}
+        custom = {"HR": 10, "1B": 0}
         assert compute_batter_fpts(row, scoring=custom) == 10.0
 
     def test_full_season_example(self):
-        """Aaron Judge 2022-style line: 133R, 62HR, 131RBI, 16SB, 3CS, 111BB, 175SO, 78H (non-HR singles approx)."""
+        """Aaron Judge 2022-style line."""
         row = {
-            "R": 133, "HR": 62, "RBI": 131, "SB": 16, "CS": 3,
+            "R": 133, "HR": 62, "RBI": 131, "SB": 16, "CS": 0,
             "BB": 111, "HBP": 6, "H": 175, "2B": 28, "3B": 0,
-            "SO": 175, "GIDP": 10,
+            "SO": 0, "GIDP": 0,
         }
         pts = compute_batter_fpts(row)
         assert pts > 0
         # Should be a big positive number for an MVP season
-        assert pts > 500
+        assert pts > 1500
+
+    def test_walk_and_hbp(self):
+        row = {"BB": 1, "HBP": 1}
+        # BB=2.6 + HBP=2.6 = 5.2
+        assert compute_batter_fpts(row) == 5.2
 
 
 class TestPitcherFantasyScoring:
     def test_basic_scoring(self):
         row = {"W": 1, "SO": 10, "IPouts": 21}  # 7 IP
-        # W=5, SO=10, IPouts=21 = 36
-        assert compute_pitcher_fpts(row) == 36.0
+        # W=8, SO=10*3=30, IPouts=21*1=21 → 59
+        assert compute_pitcher_fpts(row) == 59.0
 
     def test_empty_row(self):
         assert compute_pitcher_fpts({}) == 0.0
 
-    def test_loss_penalty(self):
+    def test_loss_not_scored(self):
+        # Yahoo scoring doesn't penalize losses
         row = {"L": 1}
-        assert compute_pitcher_fpts(row) == -3.0
+        assert compute_pitcher_fpts(row) == 0.0
 
     def test_save_bonus(self):
         row = {"SV": 1}
-        assert compute_pitcher_fpts(row) == 5.0
+        # SV=8
+        assert compute_pitcher_fpts(row) == 8.0
 
     def test_earned_runs_penalty(self):
         row = {"ER": 5}
-        assert compute_pitcher_fpts(row) == -10.0
+        # 5 * -3 = -15
+        assert compute_pitcher_fpts(row) == -15.0
 
     def test_complete_game_shutout(self):
+        # CG and SHO not scored in Yahoo defaults
         row = {"CG": 1, "SHO": 1}
-        # CG=3, SHO=3 = 6
-        assert compute_pitcher_fpts(row) == 6.0
+        assert compute_pitcher_fpts(row) == 0.0
 
     def test_hits_walks_penalty(self):
         row = {"H": 10, "BB": 5, "HBP": 2}
-        # H=10*-0.5=-5, BB=5*-1=-5, HBP=2*-0.5=-1 = -11
-        assert compute_pitcher_fpts(row) == -11.0
+        # H=10*-1.3=-13, BB=5*-1.3=-6.5, HBP=2*-1.3=-2.6 → -22.1
+        assert abs(compute_pitcher_fpts(row) - (-22.1)) < 0.01
 
 
 # ---------------------------------------------------------------------------

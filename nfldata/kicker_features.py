@@ -53,9 +53,8 @@ def _aggregate_kicker_to_season(seasons):
     stats = stats.filter(pl.col("position") == "K")
     if "season_type" in stats.columns:
         stats = stats.filter(pl.col("season_type") == "REG")
-    # CR opus: Hardcoded week <= 17 excludes week 18 of the regular season, which
-    # has existed since 2021 (17-game schedule). This drops ~1 game per kicker per
-    # season for 2021+, understating games_played and biasing ppg calculations.
+    # Intentionally stop at week 17: week 18 is irrelevant for fantasy
+    # (starters often rest / play limited snaps) and would add noise.
     stats = stats.filter(pl.col("week") <= 17)
 
     # Fill nulls in kicking columns
