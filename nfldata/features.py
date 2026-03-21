@@ -212,6 +212,8 @@ def _compute_rolling_features(df):
     for stat in fill_cols:
         r3 = f"{stat}_roll_3"
         r8 = f"{stat}_roll_8"
+        # CR opus: "or True" makes this condition always true, rendering the
+        # check meaningless. Should just remove the condition entirely.
         if r3 in df.columns or True:  # we just created them
             trend_exprs.append(
                 (pl.col(r3) - pl.col(r8)).alias(f"{stat}_trend")
@@ -294,6 +296,9 @@ def build_features(seasons):
     if "position_group" in df.columns:
         df = df.filter(pl.col("position_group").is_in(["QB", "RB", "WR", "TE"]))
     elif "position" in df.columns:
+        # CR opus: "K" is included in the position fallback filter but NOT in the
+        # position_group filter above. This is inconsistent — kickers will only be
+        # included when position_group is absent. Intentional?
         df = df.filter(pl.col("position").is_in(["QB", "RB", "WR", "TE", "K"]))
     print(f"  After position filter: {df.shape[0]:,} rows")
 
@@ -308,6 +313,12 @@ def build_features(seasons):
     print("Computing opponent features...")
     df = _compute_opponent_features(df)
 
+    # CR opus: This drops ALL week-1 rows globally, but rolling features are
+    # partitioned by (player_id, season). A player in their 2nd+ season still has
+    # no rolling history in week 1 of the new season (correct to drop), but consider
+    # that week 2 also has very thin history (1 game for roll_3, roll_8). The
+    # min_periods=1 in rolling_mean will produce a "rolling avg" from just 1 data
+    # point, which may be noisier than desired.
     # Step 5: Clean up - drop week 1 of each season (no rolling history)
     df = df.filter(pl.col("week") > 1)
 
@@ -328,6 +339,10 @@ def build_features(seasons):
         "home_rest", "away_rest", "spread_line", "total_line",
         "headshot_url",
     }
+    # CR opus: raw_stat_cols is computed but never used — the raw current-week
+    # stat columns (passing_yards, rushing_yards, etc.) are NOT removed from the
+    # returned DataFrame. get_feature_columns() handles exclusion downstream, but
+    # this dead code suggests the intent was to drop them here too.
     # Also drop raw stat columns that have rolling versions
     raw_stat_cols = set(ROLLING_STATS)
 

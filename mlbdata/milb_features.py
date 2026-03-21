@@ -96,6 +96,8 @@ def _parse_milb_splits(
 
         if group == "hitting":
             ab = _int(stat.get("atBats", 0))
+            # CR opus: PA fallback formula is missing SF and SH — should be
+            # CR opus: AB + BB + HBP + SF + SH.  This undercounts PA for bunters.
             pa = _int(stat.get("plateAppearances", 0)) or (ab + _int(stat.get("baseOnBalls", 0)) + _int(stat.get("hitByPitch", 0)))
             h = _int(stat.get("hits", 0))
             hr = _int(stat.get("homeRuns", 0))
@@ -150,6 +152,9 @@ def _parse_milb_splits(
                 "WHIP": (bb + h) / ip if ip > 0 else 0.0,
                 "K9": 9.0 * so / ip if ip > 0 else 0.0,
                 "BB9": 9.0 * bb / ip if ip > 0 else 0.0,
+                # CR opus: FIP formula omits HBP — should be (13*HR + 3*(BB+HBP) - 2*K)/IP + constant.
+                # CR opus: Also, 3.2 is a rough approximation of the FIP constant; the true
+                # CR opus: value is league-specific and changes each year (~3.10-3.20).
                 "FIP": (13*hr + 3*bb - 2*so) / ip + 3.2 if ip > 0 else 0.0,
             })
             fpts = compute_pitcher_fpts(row)
@@ -373,6 +378,7 @@ def build_milb_batter_features(seasons) -> pl.DataFrame | None:
         print("  [MiLB] No ID map found — run scripts/fetch_milb.py first")
         return None
 
+    # CR opus: `reverse_map` is computed here but never used in this function.
     reverse_map = get_reverse_map()
     all_hitting = _load_cached_stats("hitting")
     draft_index = _load_draft_data()
@@ -384,6 +390,9 @@ def build_milb_batter_features(seasons) -> pl.DataFrame | None:
     rows = []
     season_list = sorted(seasons)
 
+    # CR opus: This iterates all players in id_map (batters AND pitchers) against
+    # CR opus: hitting stats. Most pitchers will simply have no hitting splits and
+    # CR opus: be skipped, but it wastes cycles. Consider filtering to known batters.
     for lahman_id, api_id in id_map.items():
         splits = all_hitting.get(api_id)
         if not splits:
@@ -421,6 +430,7 @@ def build_milb_pitcher_features(seasons) -> pl.DataFrame | None:
         print("  [MiLB] No ID map found — run scripts/fetch_milb.py first")
         return None
 
+    # CR opus: `reverse_map` is computed here but never used in this function.
     reverse_map = get_reverse_map()
     all_pitching = _load_cached_stats("pitching")
     draft_index = _load_draft_data()

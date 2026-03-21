@@ -35,11 +35,17 @@ def compute_replacement_levels(
 
     # Distribute FLEX slots across eligible positions
     total_flex = num_flex * num_teams
+    # CR opus: Hardcoded NFL-specific FLEX distribution (RB 50%, WR 40%, TE 10%).
+    # For MLB drafts that use this function, these NFL splits are applied incorrectly
+    # since MLB positions won't match these keys and will fall through to even_share.
+    # Works by accident but the intent is unclear — consider making sport-aware.
     nfl_flex_split = {"RB": 0.5, "WR": 0.4, "TE": 0.1}
     # Use NFL weights when applicable, otherwise distribute evenly
     even_share = 1.0 / len(flex_positions) if flex_positions else 0
     for pos in flex_positions:
         share = nfl_flex_split.get(pos, even_share)
+        # CR opus: int() truncates — int(12 * 0.1) = 1, so total_flex=12 distributes as
+        # RB:6 + WR:4 + TE:1 = 11, losing 1 slot. Use round() instead of int().
         starter_counts[pos] = starter_counts.get(pos, 0) + int(total_flex * share)
 
     # Group players by position
@@ -55,7 +61,10 @@ def compute_replacement_levels(
     replacement = {}
     for pos, count in starter_counts.items():
         pos_players = by_pos.get(pos, [])
-        # Replacement level is the player at the boundary (1-indexed)
+        # CR opus: Off-by-one risk. If count=12 (12 starters), idx=12 gives the 13th
+        # player (0-indexed), which is correct for replacement level. But the comment says
+        # "1-indexed" which is misleading — this IS 0-indexed and the logic is actually
+        # correct (replacement = first non-starter). The comment should be fixed.
         idx = min(count, len(pos_players) - 1)
         if idx >= 0 and pos_players:
             replacement[pos] = pos_players[idx].projected_total
@@ -264,6 +273,11 @@ def _pick_probability(
     round_frac = (current_round - 1) / max(total_rounds - 1, 1)
     spread = 3.0 + 9.0 * round_frac          # 3 early → 12 late
     midpoint = gap_size - 1                   # picks that happen in the gap
+    # CR opus: When gap_size == 1 (opponent picks once before our next turn), midpoint=0
+    # and this returns 0.0, meaning we predict zero chance anyone is taken. But with
+    # gap_size=1 there IS one pick happening. The check should be `if midpoint < 0`
+    # or the sigmoid should handle midpoint=0 naturally (it would give ~0.5 probability
+    # for adp_position=0, which is reasonable).
     if midpoint <= 0:
         return 0.0
     x = (adp_position - midpoint) / max(spread, 0.1)
@@ -360,6 +374,10 @@ def vona(
 
     # Top-K averaging for a more stable signal
     k = min(top_k, len(available_at_pos))
+    # CR opus: available_at_position() docstring claims "sorted by projected_total desc"
+    # but the implementation is just a list comprehension filter with no explicit sort.
+    # This works only because state.available preserves the initial load order (sorted desc).
+    # If anyone ever re-orders state.available (e.g. by ADP), this top-K will be wrong.
     avg_now = _mean([p.projected_total for p in available_at_pos[:k]])
 
     # Need-aware ADP adjustment
@@ -486,6 +504,8 @@ def positional_scarcity(
 
     starters = config.starter_slots()
     num_teams = config.num_teams
+    # CR opus: Hardcoded NFL flex_split again (same as compute_replacement_levels).
+    # Should be a shared constant or derived from config to avoid drift.
     flex_split = {"RB": 0.5, "WR": 0.4, "TE": 0.1}
 
     total_need = starters.get(position, 0) * num_teams

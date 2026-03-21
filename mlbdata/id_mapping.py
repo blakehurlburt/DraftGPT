@@ -77,6 +77,9 @@ def build_id_map(seasons: range, verbose: bool = False) -> dict[str, int]:
                 if pid and pid not in api_players:
                     api_players[pid] = p
         except Exception:
+            # CR opus: Bare `except Exception: pass` silently swallows HTTP errors,
+            # CR opus: timeouts, and JSON decode failures. At minimum log a warning
+            # CR opus: so callers know MLB-level players for a season were skipped.
             pass
 
     if verbose:
@@ -88,6 +91,10 @@ def build_id_map(seasons: range, verbose: bool = False) -> dict[str, int]:
     matched = 0
     for api_id, p in api_players.items():
         full_name = p.get("fullName", "")
+        # CR opus: split(maxsplit=1) puts the entire rest of the name into `last`.
+        # CR opus: For players with suffixes like "Ronald Acuna Jr." this makes
+        # CR opus: last="acuna jr" which won't match Lahman's nameLast="Acuna".
+        # CR opus: Consider stripping known suffixes (Jr., Sr., II, III, IV).
         parts = full_name.split(maxsplit=1)
         first = _normalize_name(parts[0]) if parts else ""
         last = _normalize_name(parts[1]) if len(parts) > 1 else ""
@@ -113,10 +120,16 @@ def build_id_map(seasons: range, verbose: bool = False) -> dict[str, int]:
             bd = int(bd_parts[2]) if len(bd_parts) == 3 else None
             for c in candidates:
                 if bd and c.get("birthDay") == bd:
+                    # CR opus: If multiple candidates match on birth day too, only
+                    # CR opus: the first is mapped and the rest are silently skipped.
+                    # CR opus: This can produce wrong mappings for common names.
                     id_map[c["playerID"]] = api_id
                     matched += 1
                     break
             else:
+                # CR opus: Falling back to candidates[0] when the tiebreaker fails
+                # CR opus: arbitrarily maps to the wrong player. Better to skip the
+                # CR opus: match entirely and log a warning.
                 # Just take the first candidate
                 id_map[candidates[0]["playerID"]] = api_id
                 matched += 1
@@ -140,6 +153,9 @@ def load_id_map() -> dict[str, int]:
     return json.loads(MAP_PATH.read_text())
 
 
+# CR opus: If build_id_map produces duplicate api_id values (two Lahman IDs
+# CR opus: mapping to the same MLB API ID), this reverse map silently drops one.
+# CR opus: Consider validating uniqueness of values in the forward map.
 def get_reverse_map() -> dict[int, str]:
     """Return API ID -> Lahman ID mapping."""
     return {v: k for k, v in load_id_map().items()}

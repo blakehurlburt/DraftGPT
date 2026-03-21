@@ -7,6 +7,9 @@ import polars as pl
 from pathlib import Path
 import zipfile
 
+# CR opus: These paths hardcode "2025" — when the Lahman DB is updated for the
+# CR opus: 2026 season, every reference (here, tests, .gitignore, README) must
+# CR opus: change. Consider deriving from a single constant or glob pattern.
 DATA_DIR = Path(__file__).parent.parent / "data" / "lahman_1871-2025_csv"
 ZIP_PATH = Path(__file__).parent.parent / "data" / "lahman_1871-2025_csv.zip"
 

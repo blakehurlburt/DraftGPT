@@ -36,12 +36,20 @@
     const simProgressFill = $("#sim-progress-fill");
     const simProgressText = $("#sim-progress-text");
     const simStrategies = $("#sim-strategies");
+    // CR opus: currentStrategy is initialized to "vona" but never updated anywhere in the code.
+    // The strategy tabs update currentValueMode, not currentStrategy. This means
+    // getSimValue() always looks up simData.strategies["vona"], and getAllRecsForStrategy()
+    // receives "vona" as an unused parameter. Either this variable is vestigial and should
+    // be replaced with currentValueMode wherever it's used, or there's a missing assignment.
     let currentStrategy = "vona";  // strategy used for generating recommendations
     let currentAdp = "consensus";
     let currentRisk = "balanced";  // "safe", "balanced", "aggressive"
     let currentProj = "model";    // "model" or "sleeper"
     let currentValueMode = "vbd_score";  // "vorp", "vona", "vols", "vbd_score"
     let currentSort = "value";  // "value", "adp", or "rank"
+    // CR opus: Hardcoded NFL positions here, but initSportUI() resets them dynamically.
+    // If initSportUI() is ever skipped or fails, this stale NFL set would filter out all
+    // MLB players, showing an empty recommendations table with no error.
     let posFilters = new Set(["QB", "RB", "WR", "TE"]);  // reset dynamically per sport
     let rookieOnly = false;
     let currentState = null;
@@ -63,6 +71,11 @@
     // ── Manual draft pick persistence (localStorage) ─────────────────
     const MANUAL_PICKS_KEY = "draftgpt_manual_picks";
 
+    // CR opus: Saves ALL draft picks (all teams) to localStorage, but loadManualPicks() sends
+    // them all back on reconnect. If the backend expects only the user's picks for replay,
+    // this will replay opponent picks too, potentially doubling them. Verify the /api/create
+    // endpoint's contract for the savedPicks body. Also, MANUAL_PICKS_KEY is a single global
+    // key — starting a new manual draft silently overwrites any previous draft's saved picks.
     function saveManualPicks(state) {
         if (draftMode !== "manual" || !state.all_picks) return;
         const names = state.all_picks.map((p) => p.player_name);
@@ -203,7 +216,10 @@
         return url.toString();
     }
 
-    // Request notification permission
+    // CR opus: Requesting notification permission immediately on page load (before user
+    // interaction) will be silently blocked by most modern browsers. The permission prompt
+    // should be deferred until the user clicks "Connect" or a similar user-initiated action,
+    // otherwise notificationsEnabled will remain false with no feedback to the user.
     if ("Notification" in window && Notification.permission === "default") {
         Notification.requestPermission().then((perm) => {
             notificationsEnabled = perm === "granted";
@@ -272,6 +288,10 @@
             const sport = document.querySelector('input[name="sport"]:checked')?.value || "nfl";
             const numTeams = parseInt($("#manual-teams").value, 10) || 12;
             const rosterSize = parseInt($("#manual-rounds").value, 10) || 15;
+            // CR opus: slot defaults to 1 via || if the input is 0 or NaN. But slot=0 is
+            // genuinely invalid, so || is OK. However, there's no upper-bound validation:
+            // if slot > numTeams, the backend may accept it but the UI will show a user-col
+            // that doesn't exist in the board. Should clamp slot to [1, numTeams].
             const slot = parseInt($("#manual-slot").value, 10) || 1;
 
             manualStartBtn.disabled = true;
@@ -370,6 +390,11 @@
             pickSearchResults.classList.remove("hidden");
             return;
         }
+        // CR opus: XSS vulnerability — r.name, r.position, r.team are server data injected via
+        // innerHTML without HTML-escaping. If a player name contains HTML (e.g., from a
+        // compromised API), it will be executed. The data-name attribute is only quote-escaped
+        // but not HTML-escaped (< and > pass through). Should use textContent or a proper
+        // escape function for all interpolated server values.
         pickSearchResults.innerHTML = results.map((r) =>
             `<div class="search-result" data-name="${r.name.replace(/"/g, '&quot;')}">
                 <span class="pos-badge pos-${r.position}">${r.position}</span>
@@ -433,6 +458,10 @@
         },
         {
             key: "name", label: "Player",
+            // CR opus: Same XSS concern — r.name is injected into innerHTML without escaping.
+            // This applies to all render() functions in REC_COLUMNS and ROSTER_COLUMNS that
+            // interpolate server data (name, position, team). Since renderTableRow builds HTML
+            // strings assigned to innerHTML, all interpolated values should be escaped.
             render: (r) => `<strong>${r.name}</strong>${rookieBadge(r)}`,
         },
         {
@@ -971,6 +1000,8 @@
 
         eventSource = new EventSource(apiUrl("/api/stream"));
 
+        // CR opus: No try/catch around JSON.parse — a malformed SSE payload will throw an
+        // uncaught exception and silently break all subsequent SSE processing.
         eventSource.addEventListener("draft_update", (e) => {
             const state = JSON.parse(e.data);
             resetExtraRecs();  // new picks invalidate extra recs
@@ -978,6 +1009,7 @@
             updateUI(state);
         });
 
+        // CR opus: Same JSON.parse without try/catch as draft_update above.
         eventSource.addEventListener("sim_update", (e) => {
             simData = JSON.parse(e.data);
             renderSimInsights(simData);
@@ -985,6 +1017,10 @@
             if (currentState) renderRecommendations(currentState);
         });
 
+        // CR opus: The onerror handler silently relies on browser auto-reconnect, but if the
+        // EventSource readyState is CLOSED (e.g., server returned non-200 or non-text/event-stream
+        // content-type), the browser will NOT auto-reconnect. Should check eventSource.readyState
+        // and manually reconnect with backoff when readyState === EventSource.CLOSED.
         eventSource.onerror = () => {
             console.warn("SSE connection error — browser will auto-reconnect");
         };
@@ -1050,6 +1086,12 @@
         renderTableHeader(REC_COLUMNS, $("#rec-head"), ctx);
         updateValueHeader();
 
+        // CR opus: renderRecommendations is called on every state update and sim update, and
+        // each call re-renders the thead innerHTML then re-binds click listeners. This is fine
+        // since innerHTML replacement destroys old elements (no leak), but calling
+        // renderRecommendations(currentState) from inside its own click handler triggers full
+        // re-render including re-binding — works but is inefficient. Consider separating the
+        // sort-only re-render from the full header rebuild.
         // Re-bind sortable header clicks (header was just re-rendered)
         $$("#rec-head th.sortable").forEach((th) => {
             th.addEventListener("click", () => {
@@ -1251,6 +1293,11 @@
         }
     }
 
+    // CR opus: A new Notification is created on every call but never stored or closed.
+    // If multiple SSE updates arrive rapidly while it's the user's turn, this will spam
+    // duplicate notifications. Should either track whether a notification was already sent
+    // for the current pick, or close the previous notification before creating a new one.
+    // Also, the football emoji icon is NFL-specific but this function is used for MLB too.
     function sendTurnNotification() {
         if (notificationsEnabled) {
             new Notification("Draft Assistant", {

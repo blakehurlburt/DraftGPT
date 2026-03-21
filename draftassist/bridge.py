@@ -40,6 +40,9 @@ def build_player_index(
     Returns:
         dict mapping sleeper_id -> Player
     """
+    # CR opus: If two players share the same normalized name AND position (e.g., two
+    # "Mike Williams" WRs), the second one silently overwrites the first in the dict.
+    # This causes one of them to never be matched from Sleeper data.
     # Build lookup: (normalized_name, position) -> Player
     lookup: dict[tuple[str, str], Player] = {}
     for p in our_players:
@@ -148,6 +151,9 @@ def _make_placeholder(pick: dict) -> Player:
     meta = pick.get("metadata", {})
     first = meta.get("first_name", "Unknown")
     last = meta.get("last_name", "Player")
+    # CR opus: Defaulting unknown positions to "RB" will inflate the team's RB count
+    # in positional cap tracking, potentially causing legitimate RB picks to be blocked
+    # by caps. Consider a dedicated "UNKNOWN" sentinel or "BN" (bench) position.
     pos = meta.get("position", "RB")  # Default to RB so it doesn't break caps
     team = meta.get("team", "")
 
@@ -286,6 +292,8 @@ def attach_sleeper_projections(
         if pts <= 0:
             continue
 
+        # CR opus: Hardcoded 17.0 games fallback is NFL-specific. If this is ever used
+        # for MLB players, the fallback should be ~162 (or sport-appropriate).
         # Keep our model's projected games — Sleeper doesn't project GP
         games = p.projected_games if p.projected_games > 0 else 17.0
 
@@ -294,6 +302,10 @@ def attach_sleeper_projections(
         p.sleeper_projected_ppg = pts / games if games > 0 else 0.0
         matched += 1
 
+    # CR opus: Storing mutable state as a function attribute is fragile — it's
+    # essentially a hidden global. If attach_sleeper_projections is called multiple
+    # times (e.g., across sessions), the ratios from the last call overwrite the
+    # previous ones, affecting all sessions sharing this module.
     # Store position ratios on a module-level variable for swap_projection_source
     attach_sleeper_projections._pos_ratios = _pos_ratios
     return matched
@@ -316,6 +328,9 @@ def attach_fangraphs_projections(
     }
     _PITCHER_POSITIONS = {"SP", "RP"}
 
+    # CR opus: Name-only matching (no position) means a batter and pitcher with the
+    # same name (e.g., Shohei Ohtani) will collide — whichever appears last in the
+    # fg_projections list wins. This could assign pitcher stats to a batter or vice versa.
     # Build lookup: normalized name -> FanGraphs entry
     # For batters, also store primary position for matching
     fg_lookup: dict[str, dict] = {}
@@ -422,6 +437,10 @@ def swap_projection_source(players: list[Player], source: str) -> None:
     if pos_ratios is None:
         pos_ratios = getattr(attach_fangraphs_projections, "_pos_ratios", {})
 
+    # CR opus: Players that DON'T have the selected projection source data (e.g.,
+    # no Sleeper projection) retain whatever projection values they had before the swap.
+    # This mixes projection sources within the same player pool, which could produce
+    # misleading relative rankings.
     if source == "sleeper":
         for p in players:
             if p.sleeper_projected_total > 0:

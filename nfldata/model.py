@@ -31,6 +31,9 @@ def train_model(df, target_col="fantasy_points_ppr"):
     for c in feature_cols:
         print(f"  - {c}")
 
+    # CR opus: Hardcoded train/test split on 2024. Now that 2025 season data exists,
+    # this always trains on 2018-2023 and tests on 2024, ignoring any newer data.
+    # Should derive the split dynamically, e.g. max_season = df["season"].max().
     # Temporal train/test split
     train_df = df.filter(pl.col("season") < 2024)
     test_df = df.filter(pl.col("season") == 2024)
@@ -50,6 +53,10 @@ def train_model(df, target_col="fantasy_points_ppr"):
             X_test[col] = X_test[col].astype("category")
 
     # Train XGBoost
+    # CR opus: enable_categorical=True requires ALL categorical columns to be pandas
+    # CategoricalDtype. The loop above only converts "object" dtype columns, but
+    # a column might already be a non-object non-categorical type (e.g., string)
+    # that XGBoost can't handle. Consider explicit categorical encoding instead.
     model = XGBRegressor(
         n_estimators=500,
         max_depth=6,
@@ -66,6 +73,9 @@ def train_model(df, target_col="fantasy_points_ppr"):
     )
 
     print("\nTraining XGBoost...")
+    # CR opus: Using the test set as the eval_set for early stopping introduces
+    # data leakage — the model optimizes its stopping point to minimize test error.
+    # Should use a separate validation split carved from the training data.
     model.fit(
         X_train, y_train,
         eval_set=[(X_test, y_test)],
@@ -78,6 +88,7 @@ def train_model(df, target_col="fantasy_points_ppr"):
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
     r2 = r2_score(y_test, y_pred)
 
+    # CR opus: Hardcoded "2024 season" label — should match the dynamic test season.
     print(f"\n=== Test Set Metrics (2024 season) ===")
     print(f"  MAE:  {mae:.2f}")
     print(f"  RMSE: {rmse:.2f}")

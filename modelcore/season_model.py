@@ -108,6 +108,10 @@ def walk_forward_eval(df, feature_cols_fn, max_games, min_train_seasons=2,
         y_train_games = train_df["target_games"].to_pandas()
         y_test_games = test_df["target_games"].to_pandas()
 
+        # CR opus: DATA LEAKAGE — using X_test/y_test as the early-stopping eval_set
+        # CR opus: means the model sees test-year labels during training. The model will
+        # CR opus: stop at the iteration that minimizes test-set loss, inflating walk-forward
+        # CR opus: metrics. Use a validation fold carved from the training data instead.
         # Train PPG model
         ppg_model = train_xgb(X_train, y_train_ppg, X_test, y_test_ppg, "PPG",
                               model_params=model_params)
@@ -149,6 +153,8 @@ def walk_forward_eval(df, feature_cols_fn, max_games, min_train_seasons=2,
         all_results.append(result)
 
     # Overall metrics
+    # CR opus: If all_results is empty (no test seasons met min_train_seasons), pl.concat
+    # CR opus: will raise on an empty list. Should guard with `if not all_results: return`.
     results_df = pl.concat(all_results)
     print(f"\n=== Overall Metrics ({len(test_seasons)} seasons) ===")
 
@@ -203,6 +209,8 @@ def walk_forward_with_residuals(df, feature_cols_fn, max_games, min_train_season
         X_train = train_df.select(feature_cols).to_pandas()
         X_test = test_df.select(feature_cols).to_pandas()
 
+        # CR opus: Same data leakage as walk_forward_eval — test data is used as
+        # CR opus: early-stopping eval_set in stage 1, biasing the residuals that feed stage 2.
         ppg_model = train_xgb(X_train, train_df["target_ppg"].to_pandas(),
                               X_test, test_df["target_ppg"].to_pandas())
         games_model = train_xgb(X_train, train_df["target_games"].to_pandas(),
@@ -339,6 +347,10 @@ def train_final_model(df, feature_cols_fn, quantiles=(0.1, 0.5, 0.9),
     y_ppg = df["target_ppg"].to_pandas()
     y_games = df["target_games"].to_pandas()
 
+    # CR opus: n_estimators=300 with no early stopping means the final model uses a
+    # CR opus: fixed iteration count. During walk-forward, early stopping typically halts
+    # CR opus: at ~150-250 rounds. If 300 is more than needed the model will overfit the
+    # CR opus: training data. Consider using cross-validated early stopping here too.
     _final_params = dict(
         n_estimators=300,
         max_depth=5,
@@ -428,6 +440,8 @@ def project_season(ppg_model, games_model, features_df, feature_cols_fn,
     results = features_df.select(available).with_columns([
         pl.Series("projected_ppg", np.round(pred_ppg, 1)),
         pl.Series("projected_games", np.round(pred_games, 1)),
+        # CR opus: np.round(...).astype(int) on negative values (e.g. negative PPG *
+        # CR opus: games) could produce negative projected totals. No clipping to >= 0.
         pl.Series("projected_total", np.round(pred_total, 0).astype(int)),
     ])
 

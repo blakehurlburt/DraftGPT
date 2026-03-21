@@ -75,6 +75,9 @@ def main():
     print("Building features (2018-2025)...")
     df = build_features(range(2018, 2026))
 
+    # CR opus: train_model() hardcodes train=<2024, test=2024. But we built features
+    # CR opus: through 2025, so 2025 data is loaded but never used for training or testing.
+    # CR opus: The model is trained on 2018-2023 and tested on 2024, wasting a full season.
     # Step 2: Train model on 2018-2023, test on 2024 (same as before)
     print("\nTraining model...")
     model, importance = train_model(df)
@@ -97,6 +100,9 @@ def main():
     last_2025 = last_2025.join(rosters, on="player_id", how="left")
 
     # Filter to active players (on a roster)
+    # CR opus: Allowing current_status=null means any player with no roster match
+    # CR opus: (e.g., retired players whose gsis_id didn't join) passes through as "active".
+    # CR opus: This inflates the player pool with potentially retired/cut players.
     active_statuses = ["ACT", "RES", "PUP", "NFI"]
     last_2025 = last_2025.filter(
         pl.col("current_status").is_in(active_statuses)
@@ -121,6 +127,9 @@ def main():
         pl.Series("projected_fppg", np.round(preds, 1))
     )
 
+    # CR opus: Multiplying every player's PPG by 17 assumes all players play every game.
+    # CR opus: This ignores injury risk and bye weeks. project_2026_v2.py trains a separate
+    # CR opus: games-played model; this v1 script should be deprecated or updated.
     # Add season projected total (17 games)
     results = results.with_columns(
         (pl.col("projected_fppg") * 17).round(0).cast(pl.Int32).alias("projected_total")

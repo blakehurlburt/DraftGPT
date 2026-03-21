@@ -187,6 +187,7 @@ def _build_pitcher_seasons(seasons):
         pl.when(pl.col("BFP") > 0)
         .then(pl.col("BB") / pl.col("BFP"))
         .otherwise(0.0).alias("BB_rate"),
+        # CR opus: FIP formula omits HBP — standard FIP is (13*HR + 3*(BB+HBP) - 2*K)/IP + constant.
         # FIP: (13*HR + 3*BB - 2*K)/IP + 3.2 (constant approximation)
         pl.when(pl.col("IP") > 0)
         .then(
@@ -549,6 +550,8 @@ def _add_milb_features(df, seasons, player_type="batter"):
     try:
         from .milb_features import build_milb_batter_features, build_milb_pitcher_features
     except ImportError:
+        # CR opus: Silently returning `df` on ImportError means the model trains
+        # CR opus: without MiLB features and the caller has no idea. Log a warning.
         return df
 
     if player_type == "batter":
@@ -819,6 +822,11 @@ def build_batter_projection_features(seasons):
         pl.lit(0.0).alias("target_total"),
     ])
 
+    # CR opus: `age` and `years_exp` are nulled out on line 800 (they're in stat_cols,
+    # CR opus: not id_cols), and _add_player_metadata is NOT re-run on `extended`. So
+    # CR opus: these columns are null here, and null + 1.0 = null. The projection rows
+    # CR opus: will always have age=null and years_exp=null. Fix: either exclude age/
+    # CR opus: years_exp from stat_cols, or re-run _add_player_metadata on `extended`.
     # Bump age and years_exp by 1 for projection year
     if "age" in proj.columns:
         proj = proj.with_columns((pl.col("age") + 1.0).alias("age"))
@@ -882,6 +890,9 @@ def build_pitcher_projection_features(seasons):
         pl.lit(0.0).alias("target_total"),
     ])
 
+    # CR opus: Same bug as batter projections — age and years_exp are null here
+    # CR opus: because they were nulled in the dummy rows and _add_player_metadata
+    # CR opus: is not re-run. These +1 operations are no-ops on null values.
     # Bump age and years_exp by 1
     if "age" in proj.columns:
         proj = proj.with_columns((pl.col("age") + 1.0).alias("age"))

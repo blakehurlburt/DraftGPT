@@ -22,6 +22,8 @@ from modelcore.season_model import (
     walk_forward_eval, train_final_model, project_season,
 )
 
+# CR opus: Hardcoded to end at 2025 (exclusive upper bound is 2026). When the 2026
+# CR opus: season completes, this must be manually bumped. Consider deriving dynamically.
 SEASONS = range(2009, 2026)
 
 
@@ -34,6 +36,10 @@ def run_model(df, feature_cols_fn, max_games, label):
     print(f"\n--- Walk-Forward Evaluation ({label}s) ---")
     walk_forward_eval(df, feature_cols_fn, max_games)
 
+    # CR opus: train_final_model returns (ppg_model, games_model, importance, quantile_models)
+    # CR opus: — a 4-tuple — but run_model() returns it directly. The caller in main()
+    # CR opus: unpacks 4 values, which works, but run_model's docstring says nothing about
+    # CR opus: the return shape, making this fragile if train_final_model's signature changes.
     print(f"\n--- Training Final {label} Model ---")
     return train_final_model(df, feature_cols_fn)
 
@@ -150,6 +156,9 @@ def main():
     # Combine batters and pitchers
     combined = pl.concat([bat_results, pit_results])
 
+    # CR opus: Filtering projected_total > 0 silently drops players with 0 projected
+    # CR opus: points. Players projected for few games and low PPG could legitimately round
+    # CR opus: to 0 total. This means some rostered players vanish from the output CSV.
     # Filter to positive projections only
     combined = combined.filter(pl.col("projected_total") > 0)
 

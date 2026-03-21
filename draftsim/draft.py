@@ -62,6 +62,10 @@ class DraftState:
 
     def make_pick(self, player: Player) -> None:
         """Draft a player: remove from available, add to team, advance pick."""
+        # CR opus: list.remove() is O(n) and raises ValueError if the player isn't found.
+        # With 300+ players and 180 picks per sim * thousands of sims, this is a hot path.
+        # Consider using a set or dict for O(1) removal. The ValueError case is unhandled
+        # and would crash the simulation silently if a player is double-picked.
         team_idx = self.current_team_idx
         self.available.remove(player)
         self.teams[team_idx].append(player)

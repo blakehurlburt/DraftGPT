@@ -53,6 +53,9 @@ def _aggregate_kicker_to_season(seasons):
     stats = stats.filter(pl.col("position") == "K")
     if "season_type" in stats.columns:
         stats = stats.filter(pl.col("season_type") == "REG")
+    # CR opus: Hardcoded week <= 17 excludes week 18 of the regular season, which
+    # has existed since 2021 (17-game schedule). This drops ~1 game per kicker per
+    # season for 2021+, understating games_played and biasing ppg calculations.
     stats = stats.filter(pl.col("week") <= 17)
 
     # Fill nulls in kicking columns
@@ -79,6 +82,9 @@ def _aggregate_kicker_to_season(seasons):
         .agg([
             pl.col("player_display_name").first().alias("player_display_name"),
             pl.lit("K").alias("position_group"),
+            # CR opus: pl.col("team").last() depends on row ordering within the
+            # group_by, but group_by does not guarantee order. Should sort by week
+            # before aggregating, or use a different approach to get end-of-season team.
             pl.col("team").last().alias("team"),
             pl.len().alias("games_played"),
             pl.col("kicker_fpts").mean().alias("ppg"),
@@ -99,6 +105,9 @@ def _aggregate_kicker_to_season(seasons):
         ])
     )
 
+    # CR opus: _fg40_made is accumulated above but never used — no FG 40+ accuracy
+    # rate is computed from it. Consider either computing a fg40_pct feature or
+    # removing the dead aggregation.
     # Compute percentages
     season_df = season_df.with_columns([
         (pl.col("_fg_made_total") / pl.col("_fg_att_total").clip(lower_bound=1)).alias("fg_pct"),
@@ -195,7 +204,11 @@ def _add_kicker_team_context(df, seasons):
             ts.group_by(["team", "season"])
             .agg([
                 # Points per game drives PAT/FG volume
-                ((pl.col("passing_tds") + pl.col("rushing_tds")) * 7).mean().alias("team_pts_pg"),
+                # CR opus: (passing_tds + rushing_tds) * 7 is a rough approximation of
+            # team points that ignores FGs, PATs, 2-pt conversions, safeties, and
+            # defensive/special teams TDs. This consistently underestimates team
+            # scoring, which is the key driver of kicker volume.
+            ((pl.col("passing_tds") + pl.col("rushing_tds")) * 7).mean().alias("team_pts_pg"),
             ])
         )
 

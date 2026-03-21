@@ -13,6 +13,7 @@ from typing import Optional
 
 from .players import Player
 
+# CR opus: Hardcoded "2025" in filename — should derive from current season or be configurable.
 ADP_CSV = Path(__file__).parent.parent / "data" / "FantasyPros_2025_Overall_ADP_Rankings.csv"
 
 # Map CSV column names to our platform keys
@@ -109,6 +110,8 @@ def load_adp_for_platform(
     lookup = _build_adp_lookup(csv_rows, col)
 
     # Also build a team+pos lookup for disambiguation
+    # CR opus: pos_team_lookup is typed as dict[tuple[str, str], float] but is actually
+    # keyed by a 3-tuple (name, pos, team). The type hint is wrong.
     pos_team_lookup: dict[tuple[str, str], float] = {}
     for row in csv_rows:
         name = _normalise(row.get("Player", ""))
@@ -189,6 +192,10 @@ def load_adp(
     if col is None:
         raise ValueError(f"Unknown platform '{platform}'")
 
+    # CR opus: load_adp() does NOT normalise player names (uses raw name), while
+    # load_adp_for_platform() uses _normalise(). This inconsistency means ADP lookups
+    # in opponents.py (which uses raw p.name as key) may silently fail to match if
+    # the CSV name differs from the projections name (e.g. "Jr." suffix).
     result: dict[str, float] = {}
     for row in csv_rows:
         name = row.get("Player", "").strip()

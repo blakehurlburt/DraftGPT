@@ -76,6 +76,8 @@ def _aggregate_dst_to_season(seasons):
 
     if "season_type" in ts.columns:
         ts = ts.filter(pl.col("season_type") == "REG")
+    # CR opus: Same as kicker_features — hardcoded week <= 17 excludes week 18
+    # games that have existed since 2021. This drops real regular-season games.
     ts = ts.filter(pl.col("week") <= 17)
 
     # Normalize team abbreviations
@@ -94,6 +96,12 @@ def _aggregate_dst_to_season(seasons):
     opp_scoring = ts.select([
         pl.col("team").alias("_join_team"),
         "season", "week",
+        # CR opus: This double-counts TDs: (passing_tds + rushing_tds) * 7 already
+        # awards 7 points per TD (6 for TD + assumed 1 for PAT), but then
+        # pat_made * 1 adds another point for each PAT. Also, def_tds * 6 + safeties * 2
+        # are for the scoring team's defense, not the opponent's offense — they should
+        # not be added to "opponent offensive points." The result systematically
+        # over-estimates pts_allowed.
         (
             (pl.col("passing_tds").fill_null(0) + pl.col("rushing_tds").fill_null(0)) * 7
             + pl.col("fg_made").fill_null(0) * 3

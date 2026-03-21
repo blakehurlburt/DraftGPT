@@ -37,6 +37,10 @@ def _force_need_pick(state: DraftState, team_idx: int, eligible: list[Player]) -
     mandatory = {k: v for k, v in needs.items() if k != "FLEX"}
     mandatory_count = sum(mandatory.values())
 
+    # CR opus: This uses >= which means if mandatory_count == remaining, we force
+    # need picks. But this ignores FLEX needs entirely — if a team still needs a FLEX
+    # and has mandatory_count == remaining - 1, they may draft a non-need player and
+    # then not have enough picks to fill both the last mandatory slot AND the FLEX.
     if mandatory_count >= remaining:
         # Must draft for need — find most urgent
         for pos in mandatory:
@@ -58,6 +62,8 @@ def _var_bonus(player, state, team_idx, risk_profile):
 def pick_bpa(state: DraftState, team_idx: int, **kwargs) -> Player:
     """Best Player Available — highest projected_total."""
     eligible = _eligible(state, team_idx)
+    # CR opus: If eligible is empty (all positions capped but draft not complete),
+    # max() will raise ValueError. Should handle the empty-eligible edge case.
     forced = _force_need_pick(state, team_idx, eligible)
     if forced:
         return forced
@@ -129,6 +135,8 @@ def pick_vona(
     return max(eligible, key=_score)
 
 
+# CR opus: The docstring at the top of this file mentions 5 strategies (BPA, VBD, VONA,
+# Zero-RB, Robust-RB) but only 3 are implemented. Zero-RB and Robust-RB are missing.
 STRATEGIES = {
     "bpa": pick_bpa,
     "vbd": pick_vbd,

@@ -108,6 +108,10 @@ def load_players(
                     pos_rank=int(row["pos_rank"]),
                     total_floor=float(row.get("total_floor", 0)),
                     total_ceiling=float(row.get("total_ceiling", 0)),
+                    # CR opus: `not raw_team` flags a player as a rookie when their team is
+                    # empty/missing. This is a fragile heuristic — an empty team string could
+                    # indicate bad data rather than rookie status, and actual rookies on known
+                    # teams will be missed. Consider using an explicit "is_rookie" CSV column.
                     is_rookie=not raw_team if sport == "nfl" else False,
                 )
             )

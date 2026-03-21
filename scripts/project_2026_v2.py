@@ -69,6 +69,9 @@ def main():
     df = full_df.filter(pl.col("season") < 2026)
     proj_df = full_df.filter(pl.col("season") == 2026)
 
+    # CR opus: Walk-forward eval runs here for diagnostic output only, but it trains
+    # CR opus: models that are immediately discarded. This doubles training time for no
+    # CR opus: production benefit. Consider making it optional via a --eval flag.
     # Step 3: Run walk-forward eval on training data
     print("\n--- Walk-Forward Evaluation (for reference) ---")
     from nfldata.season_model import walk_forward_eval
@@ -90,6 +93,8 @@ def main():
             pl.col("current_team").fill_null(pl.col("team"))
         )
 
+    # CR opus: Same issue as project_2026.py — null current_status passes the filter,
+    # CR opus: allowing unmatched (potentially retired/cut) players into projections.
     # Filter to active players
     active_statuses = ["ACT", "RES", "PUP", "NFI"]
     results = results.filter(
@@ -250,6 +255,10 @@ def _write_projection_csvs(results, k_results=None, dst_results=None):
         extra_avail = [c for c in available if c in extra.columns]
         all_parts.append(extra.sort("projected_total", descending=True).select(extra_avail))
 
+    # CR opus: K and DST DataFrames may have different columns than the offensive results
+    # CR opus: (e.g., missing ppg_median, ppg_floor). concat(how="diagonal") fills missing
+    # CR opus: cols with null, which is fine, but downstream consumers of all_projections.csv
+    # CR opus: must handle nulls in quantile columns for K/DST rows.
     all_df = pl.concat(all_parts, how="diagonal").sort("projected_total", descending=True)
     path = OUTPUT_DIR / "all_projections.csv"
     all_df.write_csv(path)

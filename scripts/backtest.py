@@ -36,12 +36,17 @@ def _print_analysis(results, label):
 
 
 def main():
+    # CR opus: Hardcoded range stops at 2025 (exclusive), missing the 2025 season.
+    # CR opus: Should be range(2018, 2026) to include the latest completed season.
     df = build_season_features(range(2018, 2025))
 
     # --- Standard walk-forward ---
     print("\n" + "=" * 70)
     print("  STANDARD WALK-FORWARD (baseline)")
     print("=" * 70)
+    # CR opus: walk_forward_eval() in modelcore requires (df, feature_cols_fn, max_games)
+    # CR opus: but the nfldata.season_model wrapper is called here with only (df).
+    # CR opus: This works, but note this import is from nfldata.season_model, not modelcore.
     results_std = walk_forward_eval(df)
     _print_analysis(results_std, "Standard")
 

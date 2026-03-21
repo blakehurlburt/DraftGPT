@@ -33,6 +33,9 @@ class ADPOpponent:
             if state.can_draft_position(team_idx, p.position)
         ]
         if not eligible:
+            # CR opus: If state.available is also empty (all players drafted), this will
+            # raise IndexError. Should check `state.available` is non-empty or raise a
+            # clear error / return None.
             return state.available[0]  # fallback
 
         if self.rng.random() < 0.7:
@@ -42,6 +45,10 @@ class ADPOpponent:
 
     def _adp_pick(self, eligible: list[Player]) -> Player:
         """Pick best available by noisy ADP."""
+        # CR opus: Players missing from ADP (base=999.0) get a noisy value around 999,
+        # making them essentially never picked. This is fine for known players but means
+        # any projection-only player (not in FantasyPros CSV) is invisible to opponents,
+        # potentially over-valuing them for the user since opponents will never draft them.
         def noisy_adp(p: Player) -> float:
             base = self.adp.get(p.name, 999.0)
             return base + self.rng.normal(0, self.noise_std)

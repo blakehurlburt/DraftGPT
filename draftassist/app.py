@@ -136,6 +136,7 @@ app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Data sources tracked for freshness display
+# CR opus: Filename hardcodes "2025" — should be updated or parameterized for 2026 season.
 _DATA_SOURCES = [
     {
         "name": "ADP Rankings",
@@ -372,6 +373,8 @@ def _refresh_manual_state(sess: DraftSession):
 
 def _push_to_subscribers(sess: DraftSession, payload):
     """Push payload to all SSE subscriber queues."""
+    # CR opus: `dead` list is always empty — nothing ever appends to it.
+    # QueueFull exceptions silently drop updates; consider logging or evicting stale subscribers.
     dead = []
     for q in sess.subscribers:
         try:
@@ -386,6 +389,7 @@ def _push_to_subscribers(sess: DraftSession, payload):
 def _push_sim_to_subscribers(sess: DraftSession, payload: dict):
     """Push a sim_update event to all SSE subscriber queues."""
     wrapped = {"__event__": "sim_update", **payload}
+    # CR opus: Same dead-list bug as _push_to_subscribers — `dead` is never populated.
     dead = []
     for q in sess.subscribers:
         try:
@@ -444,6 +448,9 @@ async def _poll_loop(sess: DraftSession):
     """Background task: poll Sleeper every 1s, push SSE on new picks."""
     log.info("Poll loop started for draft %s", sess.draft_id)
     meta_refresh_interval = 30  # seconds between meta refreshes
+    # CR opus: This loop creates a new httpx.AsyncClient on every 1-second poll iteration.
+    # This prevents HTTP connection reuse and adds overhead. Consider creating one client
+    # for the lifetime of the poll loop.
     while True:
         await asyncio.sleep(1)
         if not sess.connected:
@@ -512,6 +519,8 @@ async def _poll_loop(sess: DraftSession):
                     log.info("Started live sim (picks_until=%d)", picks_until)
 
         except httpx.HTTPError as e:
+            # CR opus: No backoff on repeated HTTP errors — if the Sleeper API goes down,
+            # this fires a request every 1 second indefinitely with no exponential backoff.
             log.warning("Poll HTTP error: %s", e)
         except Exception as e:
             log.exception("Poll loop error: %s", e)
@@ -531,7 +540,11 @@ def _ensure_poll_running(sess: DraftSession):
 
 @app.post("/api/connect")
 async def connect_draft(
+    # CR opus: draft_id is not validated — any string is passed directly into Sleeper API URL.
+    # Should validate format (e.g., numeric Sleeper draft IDs) to prevent SSRF or unexpected errors.
     draft_id: str = Query(...),
+    # CR opus: No upper-bound validation on user_slot. A value > num_teams will silently produce
+    # wrong results (the 0-indexed slot will be out of range for state.teams).
     user_slot: int = Query(..., description="1-indexed draft slot"),
 ):
     """Connect to a Sleeper draft. Creates a new session."""
@@ -552,6 +565,9 @@ async def connect_draft(
             sleeper_proj = {}
             log.warning("Failed to fetch Sleeper projections — tab will be disabled")
 
+    # CR opus: load_players() with no sport argument defaults to NFL, but there's no
+    # explicit sport parameter on this endpoint. If the Sleeper draft is for a non-NFL
+    # sport, the wrong player pool will be loaded.
     players = load_players()
     id_to_player = build_player_index(players, sleeper_players)
 
@@ -814,6 +830,9 @@ async def stream(
     async def event_generator():
         try:
             while True:
+                # CR opus: request.is_disconnected() is awaited on every loop iteration,
+                # but it only runs AFTER the 15-second wait_for timeout. A disconnected
+                # client won't be detected for up to 15 seconds after disconnect.
                 if await request.is_disconnected():
                     break
                 try:
