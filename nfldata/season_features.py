@@ -379,13 +379,11 @@ def _build_prior_features(season_df):
         .over("player_id")
         .alias("_cum_max_games")
     )
-    # CR opus: Division by zero when _cum_max_games is 0 (first row per player, where
-    # CR opus: shift(1).fill_null(0).cum_sum() = 0). Polars produces inf for float div
-    # CR opus: by 0 and NaN for 0/0. These propagate into the model as degenerate feature
-    # CR opus: values. The row IS filtered out later (prior1_ppg is null), but if a rookie
-    # CR opus: row is retained via is_rookie==1.0, career_games_rate will be inf/NaN.
     df = df.with_columns(
-        (pl.col("_cum_games") / pl.col("_cum_max_games")).alias("career_games_rate")
+        pl.when(pl.col("_cum_max_games") > 0)
+        .then(pl.col("_cum_games") / pl.col("_cum_max_games"))
+        .otherwise(0.0)
+        .alias("career_games_rate")
     )
 
     # --- Best prior season PPG ---

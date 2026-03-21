@@ -13,6 +13,7 @@ Set via environment variable CFBD_API_KEY or pass directly.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from pathlib import Path
@@ -20,6 +21,8 @@ from typing import Optional
 
 import polars as pl
 import requests
+
+log = logging.getLogger(__name__)
 
 CACHE_DIR = Path(__file__).parent.parent / ".cache"
 COLLEGE_CACHE = CACHE_DIR / "cfbd_player_stats.json"
@@ -59,29 +62,35 @@ def _fetch_player_stats(
     year: int,
     category: str,
     api_key: str,
+    max_retries: int = 3,
 ) -> list[dict]:
     """Fetch a single player's season stats from CFBD API."""
-    resp = requests.get(
-        f"{CFBD_BASE}/stats/player/season",
-        params={
-            "year": year,
-            "team": team,
-            "category": category,
-        },
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "accept": "application/json",
-        },
-        timeout=15,
-    )
-    # CR opus: Unbounded recursion on 429s — if the API keeps returning 429,
-    # this will recurse until stack overflow. Should add a retry counter/limit
-    # and exponential backoff.
-    if resp.status_code == 429:
-        time.sleep(2)
-        return _fetch_player_stats(player_name, team, year, category, api_key)
-    resp.raise_for_status()
-    return resp.json()
+    for attempt in range(max_retries + 1):
+        resp = requests.get(
+            f"{CFBD_BASE}/stats/player/season",
+            params={
+                "year": year,
+                "team": team,
+                "category": category,
+            },
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "accept": "application/json",
+            },
+            timeout=15,
+        )
+        if resp.status_code == 429:
+            if attempt < max_retries:
+                wait = 2 ** (attempt + 1)
+                log.warning("CFBD rate limited (429), retrying in %ds (attempt %d/%d)", wait, attempt + 1, max_retries)
+                time.sleep(wait)
+                continue
+            else:
+                log.error("CFBD rate limit exceeded after %d retries", max_retries)
+                resp.raise_for_status()
+        resp.raise_for_status()
+        return resp.json()
+    return []  # unreachable, but satisfies type checker
 
 
 def fetch_college_stats_for_team(
@@ -95,15 +104,15 @@ def fetch_college_stats_for_team(
     """
     categories = ["passing", "rushing", "receiving"]
     player_stats: dict[str, dict] = {}
+    # Track distinct seasons each player appeared in to estimate games
+    player_seasons: dict[str, set[int]] = {}
 
     for year in years:
         for cat in categories:
             try:
                 results = _fetch_player_stats("", team, year, cat, api_key)
             except Exception:
-                # CR opus: Silently swallows ALL exceptions including network errors,
-                # auth failures (401/403), and server errors (500). At minimum, log
-                # the error. A 401 (bad API key) should fail fast, not silently skip.
+                log.warning("Failed to fetch %s stats for %s (%d)", cat, team, year, exc_info=True)
                 continue
 
             for entry in results:
@@ -116,6 +125,10 @@ def fetch_college_stats_for_team(
                         "team": team,
                         "college_games": 0,
                     }
+                    player_seasons[name] = set()
+
+                # Track that this player was active in this year
+                player_seasons.setdefault(name, set()).add(year)
 
                 stat_type = entry.get("statType", "")
                 value = entry.get("stat", "")
@@ -128,6 +141,12 @@ def fetch_college_stats_for_team(
                 key = f"college_{cat}_{stat_type}"
                 # Accumulate across years
                 player_stats[name][key] = player_stats[name].get(key, 0) + val
+
+    # Estimate games played: ~13 games per college season
+    GAMES_PER_SEASON = 13
+    for name, seasons in player_seasons.items():
+        if name in player_stats:
+            player_stats[name]["college_games"] = len(seasons) * GAMES_PER_SEASON
 
     return player_stats
 
@@ -151,10 +170,8 @@ def fetch_all_college_stats(
     if api_key is None:
         api_key = _get_api_key()
     if not api_key:
-        # CR opus: Silently returns empty dict when API key is missing. Callers
-        # have no way to distinguish "no college stats found" from "API key not
-        # configured." Should log a warning or raise so the user knows to set
-        # CFBD_API_KEY.
+        log.warning("CFBD_API_KEY not set — skipping college stats fetch. "
+                     "Get a free key at https://collegefootballdata.com/key")
         return {}
 
     # CR opus: When the cache is valid, this returns the ENTIRE cached dict
@@ -191,17 +208,27 @@ def fetch_all_college_stats(
                 if name in team_stats:
                     all_stats[name] = team_stats[name]
                 else:
-                    # CR opus: Last-name-only matching is ambiguous — common last names
-                    # (e.g., "Smith", "Johnson") on the same team could match the wrong
-                    # player. Also, `stats` shadows the outer `all_stats` variable name
-                    # from the dict comprehension; using a different variable name would
-                    # improve clarity.
-                    # Try matching by last name
-                    last = name.split()[-1] if name else ""
-                    for fetched_name, stats in team_stats.items():
-                        if fetched_name.split()[-1] == last:
-                            all_stats[name] = stats
-                            break
+                    # Fuzzy match: prefer first+last match, fall back to last-name-only
+                    # if there's exactly one candidate (to avoid ambiguity).
+                    parts = name.split() if name else []
+                    first = parts[0].lower() if len(parts) > 0 else ""
+                    last = parts[-1].lower() if len(parts) > 0 else ""
+                    last_matches = []
+                    for fetched_name, fstats in team_stats.items():
+                        f_parts = fetched_name.split()
+                        f_first = f_parts[0].lower() if f_parts else ""
+                        f_last = f_parts[-1].lower() if f_parts else ""
+                        if f_last == last:
+                            if f_first == first:
+                                # Full name match — use immediately
+                                all_stats[name] = fstats
+                                last_matches = []
+                                break
+                            last_matches.append(fstats)
+                    else:
+                        # No full-name match found; use last-name only if unambiguous
+                        if len(last_matches) == 1:
+                            all_stats[name] = last_matches[0]
         except Exception as e:
             print(f"  Warning: failed to fetch stats for {school}: {e}")
             continue
