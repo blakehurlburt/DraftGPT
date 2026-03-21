@@ -192,13 +192,9 @@ def load_adp(
     if col is None:
         raise ValueError(f"Unknown platform '{platform}'")
 
-    # CR opus: load_adp() does NOT normalise player names (uses raw name), while
-    # load_adp_for_platform() uses _normalise(). This inconsistency means ADP lookups
-    # in opponents.py (which uses raw p.name as key) may silently fail to match if
-    # the CSV name differs from the projections name (e.g. "Jr." suffix).
     result: dict[str, float] = {}
     for row in csv_rows:
-        name = row.get("Player", "").strip()
+        name = _normalise(row.get("Player", ""))
         raw = row.get(col, "").strip()
         if name and raw:
             try:

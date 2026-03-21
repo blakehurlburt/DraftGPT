@@ -114,6 +114,10 @@ _INJURY_KEYWORD_MAP = [
     ("calf", "calf"),
     ("shoulder", "shoulder"),
     ("knee", "knee"),
+    # CR opus: "high_ankle" exists in INJURY_PROFILES (severity 3) but no keyword
+    # maps to it. A "high ankle" injury string matches "ankle" here (severity 2),
+    # so high ankle sprains are always under-classified. Add ("high ankle", "high_ankle")
+    # BEFORE this line.
     ("ankle", "ankle"),
     ("hip", "hip"),
     ("back", "back"),
@@ -183,6 +187,8 @@ def _aggregate_to_season(seasons):
     # Filter to regular season only, weeks 1-17
     if "season_type" in stats.columns:
         stats = stats.filter(pl.col("season_type") == "REG")
+    # CR opus: Same week <= 17 issue as kicker/DST — drops week 18 regular-season
+    # games (2021+). Should use week <= 18, or dynamically derive from schedule.
     stats = stats.filter(pl.col("week") <= 17)
 
     # Filter to offensive skill positions
@@ -204,6 +210,10 @@ def _aggregate_to_season(seasons):
     id_exprs = [
         pl.col("player_display_name").first().alias("player_display_name"),
         pl.col("position_group").first().alias("position_group"),
+        # CR opus: pl.col("team").last() within group_by does not guarantee row
+        # ordering — group_by output order is undefined in polars. This may not
+        # reliably return the end-of-season team. Sort by week before group_by,
+        # or use a different approach (e.g., the team from the highest week).
         pl.col("team").last().alias("team"),  # end-of-season team assignment
     ]
 
@@ -227,6 +237,8 @@ def _aggregate_to_season(seasons):
     ]
 
     # Filter to available columns
+    # CR opus: This filter is a no-op (always True). Dead code — remove or
+    # replace with an actual availability check.
     mean_exprs = [e for e in mean_exprs if True]  # all should be available after fill
 
     # Consistency
@@ -263,6 +275,12 @@ def _build_prior_features(season_df):
     # Sort to ensure correct lag ordering
     df = season_df.sort(["player_id", "season"])
 
+    # Track shifted seasons to validate consecutive-year gaps
+    df = df.with_columns([
+        pl.col("season").shift(1).over("player_id").alias("_prior1_season"),
+        pl.col("season").shift(2).over("player_id").alias("_prior2_season"),
+    ])
+
     # --- Prior 1-year features (most recent season) ---
     prior1_exprs = []
     for stat in pg_stats:
@@ -279,14 +297,29 @@ def _build_prior_features(season_df):
 
     df = df.with_columns(prior1_exprs)
 
+    # Null out prior1 features if the previous row isn't from the immediately
+    # prior season (e.g., player missed a full year due to injury/opt-out)
+    _prior1_cols = [f"prior1_{s}" for s in pg_stats] + ["prior1_ppg_std", "prior_games_played"]
+    _gap1_valid = (pl.col("season") - pl.col("_prior1_season") == 1)
+    df = df.with_columns([
+        pl.when(_gap1_valid).then(pl.col(c)).otherwise(None).alias(c)
+        for c in _prior1_cols if c in df.columns
+    ])
+
     # --- Prior 2-year average (X-1 and X-2) ---
     prior2_stats = ["ppg", "pass_ypg", "rush_ypg", "rec_ypg"]
     prior2_exprs = []
     for stat in prior2_stats:
-        # Average of shift(1) and shift(2)
+        # Average of shift(1) and shift(2), only when both are consecutive
         prior2_exprs.append(
-            ((pl.col(stat).shift(1) + pl.col(stat).shift(2)) / 2.0)
-            .over("player_id")
+            pl.when(
+                _gap1_valid & (pl.col("season") - pl.col("_prior2_season") == 2)
+            )
+            .then(
+                ((pl.col(stat).shift(1) + pl.col(stat).shift(2)) / 2.0)
+                .over("player_id")
+            )
+            .otherwise(None)
             .alias(f"{stat}_2yr")
         )
     df = df.with_columns(prior2_exprs)
@@ -296,8 +329,14 @@ def _build_prior_features(season_df):
     trend_exprs = []
     for stat in trend_stats:
         trend_exprs.append(
-            (pl.col(stat).shift(1) - pl.col(stat).shift(2))
-            .over("player_id")
+            pl.when(
+                _gap1_valid & (pl.col("season") - pl.col("_prior2_season") == 2)
+            )
+            .then(
+                (pl.col(stat).shift(1) - pl.col(stat).shift(2))
+                .over("player_id")
+            )
+            .otherwise(None)
             .alias(f"{stat}_trend")
         )
     df = df.with_columns(trend_exprs)
@@ -340,6 +379,11 @@ def _build_prior_features(season_df):
         .over("player_id")
         .alias("_cum_max_games")
     )
+    # CR opus: Division by zero when _cum_max_games is 0 (first row per player, where
+    # CR opus: shift(1).fill_null(0).cum_sum() = 0). Polars produces inf for float div
+    # CR opus: by 0 and NaN for 0/0. These propagate into the model as degenerate feature
+    # CR opus: values. The row IS filtered out later (prior1_ppg is null), but if a rookie
+    # CR opus: row is retained via is_rookie==1.0, career_games_rate will be inf/NaN.
     df = df.with_columns(
         (pl.col("_cum_games") / pl.col("_cum_max_games")).alias("career_games_rate")
     )
@@ -606,6 +650,11 @@ def _add_combine_draft_features(df):
         subset=["player_id"], keep="first"
     )
     # Encode top conferences as integers, rest as 0
+    # CR opus: "Pacific Twelve Conference" was effectively dissolved after 2023-24
+    # realignment (only 2 schools remain as of 2024). Players from 2024+ drafts
+    # who attended former Pac-12 schools now in Big Ten/Big 12 may have updated
+    # conference labels, causing mismatches. Also, ordinal encoding (1-6) implies
+    # a ranking relationship that doesn't exist — consider one-hot or target encoding.
     top_conferences = {
         "Southeastern Conference": 1,
         "Big Ten Conference": 2,
@@ -737,7 +786,7 @@ def _add_roster_context_features(df, seasons):
     # Compare rosters at each position between consecutive seasons
     # to find departed and arriving players
     roster_by_team = (
-        df.select(["player_id", "team", "season", "position_group", "ppg"])
+        df.select(["player_id", "team", "season", "position_group", "ppg", "games_played"])
         .filter(pl.col("ppg").is_not_null())
     )
 
@@ -821,8 +870,8 @@ def _add_roster_context_features(df, seasons):
         roster_by_team.filter(pl.col("position_group") == "QB")
         .group_by(["team", "season"])
         .agg([
-            pl.col("player_id").first().alias("primary_qb"),  # first after sort = most games (from agg)
-            pl.col("ppg").first().alias("primary_qb_ppg"),
+            pl.col("player_id").sort_by("games_played", descending=True).first().alias("primary_qb"),
+            pl.col("ppg").sort_by("games_played", descending=True).first().alias("primary_qb_ppg"),
         ])
     )
 
@@ -931,7 +980,15 @@ def _backfill_projection_metadata(df, projection_year, rookie_rows):
     # For rookies, fill height/weight from combine data
     if rookie_rows is not None and rookie_rows.shape[0] > 0:
         try:
+            # CR opus: load_combine() with a list arg returns combine data for that
+            # draft year. If no combine data exists for projection_year, this raises
+            # or returns empty, caught by the except below.
             combine_meta = nfl.load_combine([projection_year])
+            # CR opus: Assumes height is in "ht" column with "feet-inches" string
+            # format (e.g., "6-2"), but elsewhere in the codebase height is already
+            # numeric (inches). If nflreadpy changed the combine schema, "ht" may
+            # not exist or may already be numeric, causing an AttributeError on
+            # .str.split(). Should guard with a dtype/column-existence check.
             combine_meta = combine_meta.with_columns(
                 pl.col("ht").str.split("-").map_elements(
                     lambda parts: float(parts[0]) * 12 + float(parts[1]) if len(parts) == 2 else None,

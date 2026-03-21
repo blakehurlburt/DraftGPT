@@ -96,9 +96,9 @@ def _parse_milb_splits(
 
         if group == "hitting":
             ab = _int(stat.get("atBats", 0))
-            # CR opus: PA fallback formula is missing SF and SH — should be
-            # CR opus: AB + BB + HBP + SF + SH.  This undercounts PA for bunters.
-            pa = _int(stat.get("plateAppearances", 0)) or (ab + _int(stat.get("baseOnBalls", 0)) + _int(stat.get("hitByPitch", 0)))
+            sf = _int(stat.get("sacFlies", 0))
+            sh = _int(stat.get("sacBunts", 0))
+            pa = _int(stat.get("plateAppearances", 0)) or (ab + _int(stat.get("baseOnBalls", 0)) + _int(stat.get("hitByPitch", 0)) + sf + sh)
             h = _int(stat.get("hits", 0))
             hr = _int(stat.get("homeRuns", 0))
             doubles = _int(stat.get("doubles", 0))
@@ -152,10 +152,7 @@ def _parse_milb_splits(
                 "WHIP": (bb + h) / ip if ip > 0 else 0.0,
                 "K9": 9.0 * so / ip if ip > 0 else 0.0,
                 "BB9": 9.0 * bb / ip if ip > 0 else 0.0,
-                # CR opus: FIP formula omits HBP — should be (13*HR + 3*(BB+HBP) - 2*K)/IP + constant.
-                # CR opus: Also, 3.2 is a rough approximation of the FIP constant; the true
-                # CR opus: value is league-specific and changes each year (~3.10-3.20).
-                "FIP": (13*hr + 3*bb - 2*so) / ip + 3.2 if ip > 0 else 0.0,
+                "FIP": (13*hr + 3*(bb + hbp) - 2*so) / ip + 3.2 if ip > 0 else 0.0,
             })
             fpts = compute_pitcher_fpts(row)
             row["fpts"] = fpts
@@ -185,6 +182,9 @@ def _weighted_avg(rows: list[dict], key: str, weight_key: str = "PA") -> float:
     total_w = sum(r.get(weight_key, 0) for r in rows)
     if total_w == 0:
         return 0.0
+    # CR opus: Default weight_key is "PA" but pitcher features call this with
+    # CR opus: weight_key="IP". If a pitcher row is missing "IP" (e.g. due to
+    # CR opus: a parsing error), it silently gets weight=0 and is excluded.
     return sum(r.get(key, 0) * r.get(weight_key, 0) for r in rows) / total_w
 
 
@@ -207,6 +207,11 @@ def _compute_batter_milb_features(splits: list[dict], before_year: int) -> dict 
     highest_rank = rows[0]["level_rank"]
     highest_level = rows[0]["level"]
 
+    # CR opus: This computes the earliest season at the highest level, but calls
+    # CR opus: it "age at highest level" in the comment — it's actually just the
+    # CR opus: year. It's used for milb_level_jump_recency = before_year - earliest,
+    # CR opus: which measures how many years ago the player first reached this level.
+    # CR opus: But without birth year, this is not actually "age" — it's tenure.
     # Find age at highest level (earliest season at that level)
     earliest_at_highest = min(
         (r["season"] for r in rows if r["level_rank"] == highest_rank),
@@ -348,6 +353,9 @@ def _load_draft_data() -> dict[int, dict]:
             if pid in index:
                 continue
             index[pid] = {
+                # CR opus: int(path.stem) will crash if the filename is not a
+                # CR opus: valid integer (e.g., "2024_supplemental.json"). Should
+                # CR opus: be wrapped in try/except like the other file parsers.
                 "draft_year": int(path.stem),
                 "draft_round": _int(pick.get("pickRound", 99)),
                 "draft_pick": _int(pick.get("pickNumber", 999)),

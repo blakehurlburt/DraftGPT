@@ -313,3 +313,60 @@ class TestProjectionFeatures:
     def test_has_dummy_targets(self, batter_proj):
         assert "target_ppg" in batter_proj.columns
         assert "target_games" in batter_proj.columns
+
+
+# ---------------------------------------------------------------------------
+# MiLB feature formula tests
+# ---------------------------------------------------------------------------
+
+class TestMiLBFormulas:
+    def test_fip_includes_hbp(self):
+        """FIP formula should include HBP: (13*HR + 3*(BB+HBP) - 2*K)/IP + C."""
+        from mlbdata.milb_features import _parse_milb_splits
+        splits = [{
+            "season": "2023",
+            "_sport_id": None,
+            "_level": "AAA",
+            "stat": {
+                "gamesPlayed": 20,
+                "inningsPitched": "90.0",
+                "outs": 270,
+                "wins": 5, "losses": 3, "saves": 0,
+                "strikeOuts": 80, "baseOnBalls": 20,
+                "hits": 70, "earnedRuns": 30,
+                "homeRuns": 8, "hitByPitch": 10,
+                "gamesStarted": 15, "completeGames": 0, "shutouts": 0,
+            }
+        }]
+        rows = _parse_milb_splits(splits, before_year=2025, group="pitching")
+        assert len(rows) == 1
+        fip = rows[0]["FIP"]
+        # Manual: (13*8 + 3*(20+10) - 2*80) / 90 + 3.2
+        #       = (104 + 90 - 160) / 90 + 3.2 = 34/90 + 3.2 ≈ 3.578
+        expected = (13*8 + 3*(20+10) - 2*80) / 90.0 + 3.2
+        assert abs(fip - expected) < 0.01
+
+    def test_pa_includes_sf_sh(self):
+        """PA fallback should include SF and SH."""
+        from mlbdata.milb_features import _parse_milb_splits
+        splits = [{
+            "season": "2023",
+            "_sport_id": None,
+            "_level": "AAA",
+            "stat": {
+                "gamesPlayed": 50,
+                "atBats": 180,
+                # No plateAppearances — triggers fallback
+                "baseOnBalls": 20,
+                "hitByPitch": 5,
+                "sacFlies": 4,
+                "sacBunts": 3,
+                "hits": 50, "homeRuns": 10, "doubles": 8, "triples": 2,
+                "strikeOuts": 40, "stolenBases": 5, "caughtStealing": 2,
+                "rbi": 30, "runs": 25,
+            }
+        }]
+        rows = _parse_milb_splits(splits, before_year=2025, group="hitting")
+        assert len(rows) == 1
+        # PA fallback = AB + BB + HBP + SF + SH = 180 + 20 + 5 + 4 + 3 = 212
+        assert rows[0]["PA"] == 212

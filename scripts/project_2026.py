@@ -46,13 +46,13 @@ def get_current_rosters():
     # Resolve player names to gsis_id for joining with feature data
     name_map = (
         nfl.load_players()
-        .select(["gsis_id", "display_name"])
+        .select(["gsis_id", "display_name", "position"])
         .drop_nulls()
-        .unique(subset=["display_name"])
+        .unique(subset=["display_name", "position"])
         .rename({"gsis_id": "player_id", "display_name": "player_name"})
     )
 
-    roster_df = roster_df.join(name_map, on="player_name", how="left")
+    roster_df = roster_df.join(name_map, on=["player_name", "position"], how="left")
     unmatched = roster_df.filter(pl.col("player_id").is_null()).shape[0]
     if unmatched > 0:
         print(f"  Warning: {unmatched} players could not be matched to nflverse IDs")

@@ -98,27 +98,32 @@ def walk_forward_eval(df, feature_cols_fn, max_games, min_train_seasons=2,
         print(f"  Train: {train_df.shape[0]} rows ({min_season}-{test_season - 1})")
         print(f"  Test:  {test_df.shape[0]} rows")
 
-        # Prepare data
-        X_train = train_df.select(feature_cols).to_pandas()
+        # Prepare data — use last training season as validation for early stopping
+        # to avoid data leakage from using the test set
+        train_seasons = sorted(train_df["season"].unique().to_list())
+        val_season = train_seasons[-1]
+        train_proper = train_df.filter(pl.col("season") < val_season)
+        val_df = train_df.filter(pl.col("season") == val_season)
+
+        X_train = train_proper.select(feature_cols).to_pandas()
+        X_val = val_df.select(feature_cols).to_pandas()
         X_test = test_df.select(feature_cols).to_pandas()
 
-        y_train_ppg = train_df["target_ppg"].to_pandas()
+        y_train_ppg = train_proper["target_ppg"].to_pandas()
+        y_val_ppg = val_df["target_ppg"].to_pandas()
         y_test_ppg = test_df["target_ppg"].to_pandas()
 
-        y_train_games = train_df["target_games"].to_pandas()
+        y_train_games = train_proper["target_games"].to_pandas()
+        y_val_games = val_df["target_games"].to_pandas()
         y_test_games = test_df["target_games"].to_pandas()
 
-        # CR opus: DATA LEAKAGE — using X_test/y_test as the early-stopping eval_set
-        # CR opus: means the model sees test-year labels during training. The model will
-        # CR opus: stop at the iteration that minimizes test-set loss, inflating walk-forward
-        # CR opus: metrics. Use a validation fold carved from the training data instead.
-        # Train PPG model
-        ppg_model = train_xgb(X_train, y_train_ppg, X_test, y_test_ppg, "PPG",
+        # Train PPG model (early stopping on held-out validation season)
+        ppg_model = train_xgb(X_train, y_train_ppg, X_val, y_val_ppg, "PPG",
                               model_params=model_params)
         pred_ppg = ppg_model.predict(X_test)
 
         # Train games model
-        games_model = train_xgb(X_train, y_train_games, X_test, y_test_games, "Games",
+        games_model = train_xgb(X_train, y_train_games, X_val, y_val_games, "Games",
                                 model_params=model_params)
         pred_games = np.clip(games_model.predict(X_test), 0, max_games)
 
@@ -206,15 +211,20 @@ def walk_forward_with_residuals(df, feature_cols_fn, max_games, min_train_season
         train_df = df.filter(pl.col("season") < test_season)
         test_df = df.filter(pl.col("season") == test_season)
 
-        X_train = train_df.select(feature_cols).to_pandas()
+        # Use last training season as validation for early stopping
+        s1_train_seasons = sorted(train_df["season"].unique().to_list())
+        s1_val_season = s1_train_seasons[-1]
+        s1_train_proper = train_df.filter(pl.col("season") < s1_val_season)
+        s1_val_df = train_df.filter(pl.col("season") == s1_val_season)
+
+        X_train = s1_train_proper.select(feature_cols).to_pandas()
+        X_val = s1_val_df.select(feature_cols).to_pandas()
         X_test = test_df.select(feature_cols).to_pandas()
 
-        # CR opus: Same data leakage as walk_forward_eval — test data is used as
-        # CR opus: early-stopping eval_set in stage 1, biasing the residuals that feed stage 2.
-        ppg_model = train_xgb(X_train, train_df["target_ppg"].to_pandas(),
-                              X_test, test_df["target_ppg"].to_pandas())
-        games_model = train_xgb(X_train, train_df["target_games"].to_pandas(),
-                                X_test, test_df["target_games"].to_pandas())
+        ppg_model = train_xgb(X_train, s1_train_proper["target_ppg"].to_pandas(),
+                              X_val, s1_val_df["target_ppg"].to_pandas())
+        games_model = train_xgb(X_train, s1_train_proper["target_games"].to_pandas(),
+                                X_val, s1_val_df["target_games"].to_pandas())
 
         pred_ppg = ppg_model.predict(X_test)
         pred_games = np.clip(games_model.predict(X_test), 0, max_games)
@@ -256,23 +266,38 @@ def walk_forward_with_residuals(df, feature_cols_fn, max_games, min_train_season
         train_ppg_res, train_games_res = _get_residuals(train_df)
         test_ppg_res, test_games_res = _get_residuals(test_df)
 
-        X_train = train_df.select(feature_cols).to_pandas()
-        X_train["prior_ppg_residual"] = train_ppg_res
-        X_train["prior_games_residual"] = train_games_res
+        # Split training into train-proper + validation for early stopping
+        s2_train_seasons = sorted(train_df["season"].unique().to_list())
+        s2_val_season = s2_train_seasons[-1]
+        s2_train_proper = train_df.filter(pl.col("season") < s2_val_season)
+        s2_val_df = train_df.filter(pl.col("season") == s2_val_season)
+
+        s2_train_ppg_res, s2_train_games_res = _get_residuals(s2_train_proper)
+        s2_val_ppg_res, s2_val_games_res = _get_residuals(s2_val_df)
+
+        X_train = s2_train_proper.select(feature_cols).to_pandas()
+        X_train["prior_ppg_residual"] = s2_train_ppg_res
+        X_train["prior_games_residual"] = s2_train_games_res
+
+        X_val = s2_val_df.select(feature_cols).to_pandas()
+        X_val["prior_ppg_residual"] = s2_val_ppg_res
+        X_val["prior_games_residual"] = s2_val_games_res
 
         X_test = test_df.select(feature_cols).to_pandas()
         X_test["prior_ppg_residual"] = test_ppg_res
         X_test["prior_games_residual"] = test_games_res
 
-        y_train_ppg = train_df["target_ppg"].to_pandas()
+        y_train_ppg = s2_train_proper["target_ppg"].to_pandas()
+        y_val_ppg = s2_val_df["target_ppg"].to_pandas()
         y_test_ppg = test_df["target_ppg"].to_pandas()
-        y_train_games = train_df["target_games"].to_pandas()
+        y_train_games = s2_train_proper["target_games"].to_pandas()
+        y_val_games = s2_val_df["target_games"].to_pandas()
         y_test_games = test_df["target_games"].to_pandas()
 
-        ppg_model = train_xgb(X_train, y_train_ppg, X_test, y_test_ppg)
+        ppg_model = train_xgb(X_train, y_train_ppg, X_val, y_val_ppg)
         pred_ppg = ppg_model.predict(X_test)
 
-        games_model = train_xgb(X_train, y_train_games, X_test, y_test_games)
+        games_model = train_xgb(X_train, y_train_games, X_val, y_val_games)
         pred_games = np.clip(games_model.predict(X_test), 0, max_games)
 
         pred_total = pred_ppg * pred_games
@@ -450,6 +475,11 @@ def project_season(ppg_model, games_model, features_df, feature_cols_fn,
         for q, q_model in sorted(quantile_models.items()):
             q_pred = q_model.predict(X) + adj
             q_total = q_pred * pred_games
+            # CR opus: These labels only match the exact values 0.1, 0.5, 0.9. If
+            # CR opus: train_final_model is called with different quantiles (e.g., 0.25, 0.75),
+            # CR opus: they fall through to q25/q75 labels, but downstream code in train_mlb.py
+            # CR opus: and project_2026_v2.py checks for "ppg_floor"/"ppg_ceiling" by name,
+            # CR opus: so non-default quantiles would silently produce unused columns.
             if q == 0.1:
                 label = "floor"
             elif q == 0.5:

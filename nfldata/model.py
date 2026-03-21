@@ -31,18 +31,23 @@ def train_model(df, target_col="fantasy_points_ppr"):
     for c in feature_cols:
         print(f"  - {c}")
 
-    # CR opus: Hardcoded train/test split on 2024. Now that 2025 season data exists,
-    # this always trains on 2018-2023 and tests on 2024, ignoring any newer data.
-    # Should derive the split dynamically, e.g. max_season = df["season"].max().
-    # Temporal train/test split
-    train_df = df.filter(pl.col("season") < 2024)
-    test_df = df.filter(pl.col("season") == 2024)
-    print(f"\nTrain: {train_df.shape[0]:,} rows (2018-2023)")
-    print(f"Test:  {test_df.shape[0]:,} rows (2024)")
+    # Temporal train/test split — use latest season as test
+    max_season = df["season"].max()
+    train_df = df.filter(pl.col("season") < max_season)
+    test_df = df.filter(pl.col("season") == max_season)
+    print(f"\nTrain: {train_df.shape[0]:,} rows (<{max_season})")
+    print(f"Test:  {test_df.shape[0]:,} rows ({max_season})")
+
+    # Use second-to-last season as validation for early stopping (no test leakage)
+    val_season = max_season - 1
+    train_proper = train_df.filter(pl.col("season") < val_season)
+    val_df = train_df.filter(pl.col("season") == val_season)
 
     # Convert to pandas for XGBoost
-    X_train = train_df.select(feature_cols).to_pandas()
-    y_train = train_df.select(target_col).to_pandas()[target_col]
+    X_train = train_proper.select(feature_cols).to_pandas()
+    y_train = train_proper.select(target_col).to_pandas()[target_col]
+    X_val = val_df.select(feature_cols).to_pandas()
+    y_val = val_df.select(target_col).to_pandas()[target_col]
     X_test = test_df.select(feature_cols).to_pandas()
     y_test = test_df.select(target_col).to_pandas()[target_col]
 
@@ -50,6 +55,7 @@ def train_model(df, target_col="fantasy_points_ppr"):
     for col in X_train.columns:
         if X_train[col].dtype == "object":
             X_train[col] = X_train[col].astype("category")
+            X_val[col] = X_val[col].astype("category")
             X_test[col] = X_test[col].astype("category")
 
     # Train XGBoost
@@ -73,12 +79,9 @@ def train_model(df, target_col="fantasy_points_ppr"):
     )
 
     print("\nTraining XGBoost...")
-    # CR opus: Using the test set as the eval_set for early stopping introduces
-    # data leakage — the model optimizes its stopping point to minimize test error.
-    # Should use a separate validation split carved from the training data.
     model.fit(
         X_train, y_train,
-        eval_set=[(X_test, y_test)],
+        eval_set=[(X_val, y_val)],
         verbose=50,
     )
 
@@ -88,8 +91,7 @@ def train_model(df, target_col="fantasy_points_ppr"):
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
     r2 = r2_score(y_test, y_pred)
 
-    # CR opus: Hardcoded "2024 season" label — should match the dynamic test season.
-    print(f"\n=== Test Set Metrics (2024 season) ===")
+    print(f"\n=== Test Set Metrics ({max_season} season) ===")
     print(f"  MAE:  {mae:.2f}")
     print(f"  RMSE: {rmse:.2f}")
     print(f"  R²:   {r2:.4f}")

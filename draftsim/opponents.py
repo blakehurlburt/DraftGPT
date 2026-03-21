@@ -1,10 +1,20 @@
 """ADP-based opponent modeling for draft simulation."""
 
+import re
+
 import numpy as np
 
 from .config import LeagueConfig
 from .draft import DraftState
 from .players import Player
+
+
+def _normalise_name(name: str) -> str:
+    """Lowercase, strip suffixes like Jr./III/II, collapse whitespace."""
+    name = name.lower().strip()
+    name = re.sub(r"\s+(jr\.?|sr\.?|ii|iii|iv|v)$", "", name)
+    name = re.sub(r"\s+", " ", name)
+    return name
 
 
 class ADPOpponent:
@@ -22,6 +32,10 @@ class ADPOpponent:
         rng: np.random.Generator,
         noise_std: float = 3.0,
     ):
+        # CR opus: noise_std=3.0 is in ADP units (pick positions). This means a player
+        # with ADP 10 could be valued as ADP 7 or 13. In early rounds this is reasonable,
+        # but in late rounds where ADP spread is wider, 3.0 picks of noise is too tight —
+        # opponents become too predictable. Consider scaling noise_std by round.
         self.adp = adp
         self.rng = rng
         self.noise_std = noise_std
@@ -38,6 +52,9 @@ class ADPOpponent:
             # clear error / return None.
             return state.available[0]  # fallback
 
+        # CR opus: The 70/30 ADP-vs-need split is constant throughout the draft. In
+        # reality, opponents reach for need more often in later rounds. Consider making
+        # the need probability increase as the draft progresses.
         if self.rng.random() < 0.7:
             return self._adp_pick(eligible)
         else:
@@ -45,12 +62,8 @@ class ADPOpponent:
 
     def _adp_pick(self, eligible: list[Player]) -> Player:
         """Pick best available by noisy ADP."""
-        # CR opus: Players missing from ADP (base=999.0) get a noisy value around 999,
-        # making them essentially never picked. This is fine for known players but means
-        # any projection-only player (not in FantasyPros CSV) is invisible to opponents,
-        # potentially over-valuing them for the user since opponents will never draft them.
         def noisy_adp(p: Player) -> float:
-            base = self.adp.get(p.name, 999.0)
+            base = self.adp.get(_normalise_name(p.name), 999.0)
             return base + self.rng.normal(0, self.noise_std)
 
         return min(eligible, key=noisy_adp)
@@ -74,7 +87,7 @@ class ADPOpponent:
 
         # Pick best need player by noisy ADP
         def noisy_adp(p: Player) -> float:
-            base = self.adp.get(p.name, 999.0)
+            base = self.adp.get(_normalise_name(p.name), 999.0)
             return base + self.rng.normal(0, self.noise_std)
 
         return min(need_players, key=noisy_adp)

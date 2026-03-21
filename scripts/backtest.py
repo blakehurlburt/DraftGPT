@@ -36,9 +36,7 @@ def _print_analysis(results, label):
 
 
 def main():
-    # CR opus: Hardcoded range stops at 2025 (exclusive), missing the 2025 season.
-    # CR opus: Should be range(2018, 2026) to include the latest completed season.
-    df = build_season_features(range(2018, 2025))
+    df = build_season_features(range(2018, 2026))
 
     # --- Standard walk-forward ---
     print("\n" + "=" * 70)

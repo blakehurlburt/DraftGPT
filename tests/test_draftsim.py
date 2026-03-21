@@ -556,3 +556,33 @@ class TestIntegration:
             assert len(state.teams[t]) == 15
             lineup, total = compute_optimal_lineup(state.teams[t], default_config)
             assert total > 0
+
+
+# ---------------------------------------------------------------------------
+# ADP name normalisation consistency
+# ---------------------------------------------------------------------------
+
+class TestADPNormalisation:
+    def test_load_adp_normalises_names(self):
+        """load_adp() should return normalised keys (lowercase, no Jr/Sr)."""
+        adp = load_adp("consensus")
+        if not adp:
+            pytest.skip("No ADP data available")
+        # All keys should be lowercase (normalised)
+        for name in adp:
+            assert name == name.lower(), f"ADP key not normalised: {name}"
+
+    def test_opponent_matches_with_suffix(self, sample_players, small_config):
+        """Opponent should find ADP for a player whose name has Jr. suffix."""
+        # Create a player with a Jr. suffix
+        jr_player = _make_player("Patrick Mahomes Jr.", "QB", 340, rank=1)
+        # ADP dict with normalised name (no suffix)
+        adp = {"patrick mahomes": 1.0}
+        rng = np.random.default_rng(42)
+        opp = ADPOpponent(adp, rng)
+        # The noisy ADP lookup should find the match
+        state = DraftState.create(small_config, [jr_player] + sample_players)
+        eligible = [p for p in state.available if p.position == "QB"]
+        pick = opp._adp_pick(eligible)
+        # With ADP=1.0, Jr. player should be picked (lowest noisy ADP)
+        assert pick.name == "Patrick Mahomes Jr."
