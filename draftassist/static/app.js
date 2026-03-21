@@ -365,6 +365,11 @@
                 pickSearchResults.classList.add("hidden");
                 return;
             }
+            // CR opus: The debounced fetch captures `q` from the outer closure at debounce time,
+            // which is correct. However, if the user types, waits 200ms (fetch fires), then
+            // types more and clears (< 2 chars), the in-flight fetch will still call
+            // renderSearchResults and show stale results for the old query. Should check
+            // pickSearchInput.value at response time or use an AbortController.
             searchDebounce = setTimeout(async () => {
                 try {
                     const resp = await fetch(apiUrl("/api/search", { q, limit: 10 }));
@@ -644,6 +649,11 @@
             tab.classList.add("active");
             currentProj = tab.dataset.proj;
 
+            // CR opus: The POST to /api/projections is not checked for resp.ok — if the server
+            // returns an error (e.g., projection source unavailable), the code proceeds to
+            // fetch /api/state and renders with the old projection source, but the tab UI
+            // already shows the new source as active. This desync leaves the user thinking
+            // they switched projections when they didn't. Same pattern in the ADP tab handler.
             try {
                 await fetch(
                     apiUrl("/api/projections", { source: currentProj }),
@@ -744,6 +754,12 @@
             const anyRisk = Object.values(prefetchedRecs)[0] || [];
             const prefetchCount = anyRisk.length || 0;
             totalLoaded += prefetchCount;
+            // CR opus: This compares prefetchCount (number of new recs fetched) to displayCount
+            // (number of rows to show). These are semantically different — displayCount grows by
+            // 10 each time "show more" is clicked, while the prefetch batch size was based on
+            // getVisibleCount(). If the prefetch returned fewer than displayCount items, it
+            // doesn't necessarily mean the backend is exhausted — the batch size requested may
+            // have been smaller. Should compare against the requested batch size instead.
             if (prefetchCount < displayCount) backendExhausted = true;
             prefetchedRecs = {};
             renderRecommendations(currentState);
@@ -785,6 +801,11 @@
         return recs.filter((r) => posFilters.has(r.position) && (!rookieOnly || r.is_rookie)).length || 10;
     }
 
+    // CR opus: The _strategy parameter is accepted but completely ignored — the function
+    // always uses currentRisk to key into recommendations. This is called with currentStrategy
+    // (which is stuck at "vona" — see note above), but the actual data structure is keyed by
+    // risk profile, not strategy. The function name is misleading: it gets recs for a risk
+    // profile, not a strategy.
     function getAllRecsForStrategy(_strategy) {
         // recommendations is flat: { risk: [...] }
         const base = (currentState?.recommendations || {})[currentRisk] || [];
@@ -925,6 +946,10 @@
         } catch (err) {
             connectStatus.textContent = `Error: ${err.message}`;
             connectStatus.style.color = "#ff5252";
+            // CR opus: connectBtn.disabled is re-enabled here, but only for the catch path.
+            // On success, the button stays disabled forever. This is intentional (user is now
+            // connected), but if the user navigates back to the welcome screen somehow, the
+            // button will remain disabled with no way to reconnect. No "disconnect" flow exists.
             connectBtn.disabled = false;
         }
     }
@@ -985,7 +1010,11 @@
         connectToDraft(draftId, slot, null);
     });
 
-    // Header connect button (reconnect / change draft)
+    // CR opus: When reconnecting via the header, resetExtraRecs() is not called before
+    // connectToDraft — stale extraRecs/prefetchedRecs from the previous draft session may
+    // persist and render stale player data until the first draft_update SSE event arrives.
+    // Also, the old SSE connection is closed but the UI is not reset (stale roster, ticker,
+    // board from the previous draft remain visible during the new connection attempt).
     headerConnectBtn.addEventListener("click", () => {
         const draftId = parseDraftId(headerDraftId.value);
         const slot = parseInt(headerSlot.value, 10);
@@ -1117,6 +1146,9 @@
         let filtered = pool.filter((r) => posFilters.has(r.position) && (!rookieOnly || r.is_rookie));
 
         // Apply sort
+        // CR opus: When sorting by ADP, players with adp=999 or adp=undefined (undrafted/no ADP)
+        // will sort to the bottom via a.adp - b.adp, but undefined - undefined = NaN which
+        // gives unstable sort order. Players without ADP data get inconsistent positions.
         if (currentSort === "adp") {
             filtered = filtered.slice().sort((a, b) => a.adp - b.adp);
         } else if (currentSort === "value") {
@@ -1185,6 +1217,10 @@
             });
         });
 
+            // CR opus: The "urgent" threshold of count >= 2 is hardcoded. Whether 2 remaining needs
+        // is urgent depends on how many rounds are left. Needing 2 RBs with 10 rounds left
+        // is not urgent, but needing 2 with 2 rounds left is critical. This should factor in
+        // remaining rounds from state.
         rosterNeeds.innerHTML = Object.entries(needs)
             .map(([pos, count]) => {
                 const urgent = count >= 2 ? "urgent" : "";
@@ -1217,6 +1253,8 @@
             .join("");
     }
 
+    // CR opus: XSS — p.player_name and p.team from the server are injected into innerHTML
+    // without escaping. Same concern as renderSearchResults and renderBoard.
     function renderTicker(state) {
         const picks = state.recent_picks || [];
 
@@ -1236,10 +1274,17 @@
             .join("");
     }
 
+    // CR opus: renderBoard rebuilds the entire board table via innerHTML on every state update,
+    // even when the board view is hidden (currentView === "ticker"). This is wasteful for
+    // large drafts. Consider early-returning if the board is not visible.
     function renderBoard(state) {
         const picks = state.all_picks || [];
         const numTeams = state.num_teams || 12;
         const totalRounds = state.total_rounds || 15;
+        // CR opus: If state.user_slot is 0 (valid 0-indexed first slot), `|| 0` is correct.
+        // But if state.user_slot is undefined/null, this defaults to slot 1 (0+1) which may
+        // silently highlight the wrong column. Should use `?? 0` instead of `|| 0` to only
+        // default on null/undefined and not on legitimate 0.
         const userSlot = (state.user_slot || 0) + 1; // 1-indexed for display
         const currentPick = state.current_pick || 0;
 
@@ -1352,6 +1397,9 @@
         return null;
     }
 
+    // CR opus: The STALE_MS threshold of 14 days is hardcoded. During the off-season, data
+    // may legitimately be months old, causing all sources to show as "stale" (red) when
+    // nothing is actually wrong. Consider making this configurable or relative to season dates.
     // Data freshness: show when data files were last updated
     (async function loadDataFreshness() {
         const container = $("#data-freshness");
@@ -1378,6 +1426,9 @@
                     cls = age > STALE_MS ? "stale" : "fresh";
                 }
                 const howText = src.how ? `<span class="data-source-how">${src.how}</span>` : "";
+                // CR opus: src.url is injected into an href attribute without sanitization.
+                // A malicious server response with url="javascript:alert(1)" would create
+                // a clickable XSS link. Should validate that url starts with http(s)://.
                 const linkText = src.url
                     ? `<a class="data-source-link" href="${src.url}" target="_blank" rel="noopener">source</a>`
                     : "";

@@ -11,6 +11,11 @@ body {
     min-height: 100vh;
 }
 
+/* CR opus: !important on .hidden means any element using this class can never be shown
+   via inline style display overrides — code must always remove the class rather than set
+   style.display. This is fine as long as all show/hide logic uses classList, but several
+   elements (e.g., #welcome-screen, #connection-bar, #status-bar) also have their own
+   .hidden selector with "display: none" (no !important), making those rules dead code. */
 .hidden { display: none !important; }
 
 /* Welcome Screen */
@@ -782,6 +787,11 @@ th.sortable .sort-arrow {
     border-bottom: 2px solid #2d3d4f;
 }
 
+/* CR opus: z-index: 3 puts the round column header above the sticky top headers (z-index: 2),
+   which is correct for the corner cell. However, the round-cell in tbody has z-index: 1,
+   meaning when scrolling horizontally the column headers (z-index: 2) will overlap the
+   sticky round-cell column (z-index: 1). The round-cell should be at least z-index: 2 to
+   stay visible when scrolling both directions simultaneously. */
 .board-table th.round-col {
     position: sticky;
     left: 0;
@@ -1130,6 +1140,11 @@ td.sim-value {
     border-color: #66bb6a;
 }
 
+/* CR opus: The responsive breakpoint only stacks the panels. Several other elements need
+   attention at small viewports: the #filter-bar's many tab groups will overflow; the
+   #connection-bar flex layout will clip or overlap; the board-table's min-width:100% combined
+   with width:max-content can cause horizontal scroll on the entire page; and the pick-search
+   dropdown at width:360px can overflow narrow screens. Consider adding breakpoints for these. */
 /* Responsive */
 @media (max-width: 900px) {
     main { flex-direction: column; }
