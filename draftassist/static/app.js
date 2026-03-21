@@ -169,6 +169,15 @@
             }
         }
 
+        // FanGraphs projection tab — show only for MLB
+        const fgProjTab = document.querySelector('.proj-tab[data-proj="fangraphs"]');
+        if (fgProjTab) {
+            fgProjTab.classList.toggle("hidden", draftSport !== "mlb");
+            if (draftSport !== "mlb") {
+                fgProjTab.classList.remove("active");
+            }
+        }
+
         // ADP tabs — hide for MLB (no real ADP data)
         const adpTabs = document.getElementById("adp-tabs");
         if (adpTabs) {
@@ -294,6 +303,16 @@
                     sleeperProjTab.title = available
                         ? `Sleeper's season-long projections (${data.sleeper_projections_matched || 0} players)`
                         : "Sleeper projections not available";
+                }
+
+                // Enable/disable FanGraphs projection tab based on availability
+                const fgProjTab = document.querySelector('.proj-tab[data-proj="fangraphs"]');
+                if (fgProjTab) {
+                    const fgAvailable = data.fangraphs_projections_available === true;
+                    fgProjTab.disabled = !fgAvailable;
+                    fgProjTab.title = fgAvailable
+                        ? `FanGraphs Steamer projections (${data.fangraphs_projections_matched || 0} players)`
+                        : "FanGraphs projections not available";
                 }
 
                 showConnectedUI(data.draft_id, slot, data);

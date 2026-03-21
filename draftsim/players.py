@@ -31,6 +31,10 @@ class Player:
     sleeper_projected_total: float = 0.0
     sleeper_projected_ppg: float = 0.0
     sleeper_projected_games: float = 0.0
+    # FanGraphs projection values (populated for MLB drafts)
+    fangraphs_projected_total: float = 0.0
+    fangraphs_projected_ppg: float = 0.0
+    fangraphs_projected_games: float = 0.0
     # Model backup (saved before first swap, used to restore)
     _model_projected_total: float = 0.0
     _model_projected_ppg: float = 0.0

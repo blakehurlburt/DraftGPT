@@ -6,17 +6,22 @@ Handles both Sleeper API data and manual draft mode.
 from __future__ import annotations
 
 import re
+import unicodedata
 from statistics import mean as _mean
 
 from draftsim.config import LeagueConfig
 from draftsim.draft import DraftState
 from draftsim.players import Player
 
+from mlbdata.fantasy_scoring import compute_batter_fpts, compute_pitcher_fpts
 from .scoring import sleeper_stats_to_fantasy_points
 
 
 def _normalize(name: str) -> str:
-    """Lowercase, strip suffixes (Jr., III, etc.), collapse whitespace."""
+    """Lowercase, strip accents/suffixes, collapse whitespace."""
+    # Decompose unicode and drop combining marks (accents)
+    name = unicodedata.normalize("NFD", name)
+    name = "".join(c for c in name if unicodedata.category(c) != "Mn")
     name = name.lower().strip()
     name = re.sub(r"\b(jr\.?|sr\.?|ii|iii|iv|v)\b", "", name)
     name = re.sub(r"[^a-z ]", "", name)
@@ -298,13 +303,128 @@ def attach_sleeper_projections(
     return matched
 
 
+def attach_fangraphs_projections(
+    players: list[Player],
+    fg_projections: list[dict],
+) -> int:
+    """Populate FanGraphs projection fields on MLB players matched by name.
+
+    Also saves model backup values so they can be restored when toggling.
+
+    Returns the number of players that received FanGraphs projections.
+    """
+    # FanGraphs position mapping: minpos contains comma-separated positions
+    _FG_POS_MAP = {
+        "C": "C", "1B": "1B", "2B": "2B", "3B": "3B", "SS": "SS",
+        "LF": "OF", "CF": "OF", "RF": "OF", "OF": "OF", "DH": "DH",
+    }
+    _PITCHER_POSITIONS = {"SP", "RP"}
+
+    # Build lookup: normalized name -> FanGraphs entry
+    # For batters, also store primary position for matching
+    fg_lookup: dict[str, dict] = {}
+    for entry in fg_projections:
+        name = entry.get("PlayerName", "")
+        if not name:
+            continue
+        key = _normalize(name)
+        fg_lookup[key] = entry
+
+    # Compute position-average floor/ceiling ratios from model data
+    _pos_ratios: dict[str, tuple[float, float]] = {}
+    by_pos: dict[str, list[Player]] = {}
+    for p in players:
+        by_pos.setdefault(p.position, []).append(p)
+    for pos, plist in by_pos.items():
+        valid = [p for p in plist if p.projected_total > 0]
+        if valid:
+            floor_ratio = _mean(
+                p.total_floor / p.projected_total
+                for p in valid if p.total_floor > 0
+            ) if any(p.total_floor > 0 for p in valid) else 0.7
+            ceil_ratio = _mean(
+                p.total_ceiling / p.projected_total
+                for p in valid if p.total_ceiling > 0
+            ) if any(p.total_ceiling > 0 for p in valid) else 1.3
+            _pos_ratios[pos] = (floor_ratio, ceil_ratio)
+        else:
+            _pos_ratios[pos] = (0.7, 1.3)
+
+    matched = 0
+    for p in players:
+        # Save model backup (always, even if no FanGraphs data)
+        p._model_projected_total = p.projected_total
+        p._model_projected_ppg = p.projected_ppg
+        p._model_projected_games = p.projected_games
+        p._model_total_floor = p.total_floor
+        p._model_total_ceiling = p.total_ceiling
+
+        key = _normalize(p.name)
+        entry = fg_lookup.get(key)
+        if not entry:
+            continue
+
+        fg_type = entry.get("_fg_type", "bat")
+        if fg_type == "pit":
+            # Convert IP to outs for scoring
+            ip = float(entry.get("IP", 0) or 0)
+            stats = {
+                "W": float(entry.get("W", 0) or 0),
+                "L": float(entry.get("L", 0) or 0),
+                "SV": float(entry.get("SV", 0) or 0),
+                "SO": float(entry.get("SO", 0) or 0),
+                "IPouts": ip * 3,
+                "ER": float(entry.get("ER", 0) or 0),
+                "H": float(entry.get("H", 0) or 0),
+                "BB": float(entry.get("BB", 0) or 0),
+                "HBP": float(entry.get("HBP", 0) or 0),
+                "CG": float(entry.get("CG", 0) or 0),
+                "SHO": float(entry.get("SHO", 0) or 0),
+            }
+            pts = compute_pitcher_fpts(stats)
+        else:
+            stats = {
+                "R": float(entry.get("R", 0) or 0),
+                "HR": float(entry.get("HR", 0) or 0),
+                "RBI": float(entry.get("RBI", 0) or 0),
+                "SB": float(entry.get("SB", 0) or 0),
+                "CS": float(entry.get("CS", 0) or 0),
+                "BB": float(entry.get("BB", 0) or 0),
+                "HBP": float(entry.get("HBP", 0) or 0),
+                "H": float(entry.get("H", 0) or 0),
+                "2B": float(entry.get("2B", 0) or 0),
+                "3B": float(entry.get("3B", 0) or 0),
+                "SO": float(entry.get("SO", 0) or 0),
+                "GIDP": float(entry.get("GDP", 0) or 0),
+            }
+            pts = compute_batter_fpts(stats)
+
+        if pts <= 0:
+            continue
+
+        games = float(entry.get("G", 0) or 0)
+        if fg_type == "pit":
+            games = float(entry.get("GS", 0) or entry.get("G", 0) or 0)
+
+        p.fangraphs_projected_total = round(pts, 1)
+        p.fangraphs_projected_games = games
+        p.fangraphs_projected_ppg = round(pts / games, 2) if games > 0 else 0.0
+        matched += 1
+
+    # Store position ratios for swap_projection_source
+    attach_fangraphs_projections._pos_ratios = _pos_ratios
+    return matched
+
+
 def swap_projection_source(players: list[Player], source: str) -> None:
     """Swap the active projection values on all players.
 
     Args:
-        source: ``"sleeper"`` to use Sleeper projections, ``"model"`` to restore.
+        source: ``"sleeper"``, ``"fangraphs"``, or ``"model"`` to restore.
     """
-    pos_ratios = getattr(attach_sleeper_projections, "_pos_ratios", {})
+    pos_ratios = getattr(attach_sleeper_projections, "_pos_ratios", None)
+    if pos_ratios is None:
+        pos_ratios = getattr(attach_fangraphs_projections, "_pos_ratios", {})
 
     if source == "sleeper":
         for p in players:
@@ -312,11 +432,19 @@ def swap_projection_source(players: list[Player], source: str) -> None:
                 p.projected_total = p.sleeper_projected_total
                 p.projected_ppg = p.sleeper_projected_ppg
                 p.projected_games = p.sleeper_projected_games
-                # Estimate floor/ceiling from position ratios
                 fr, cr = pos_ratios.get(p.position, (0.7, 1.3))
                 p.total_floor = round(p.projected_total * fr, 1)
                 p.total_ceiling = round(p.projected_total * cr, 1)
-            # Players without Sleeper data keep their model values
+    elif source == "fangraphs":
+        fg_ratios = getattr(attach_fangraphs_projections, "_pos_ratios", pos_ratios)
+        for p in players:
+            if p.fangraphs_projected_total > 0:
+                p.projected_total = p.fangraphs_projected_total
+                p.projected_ppg = p.fangraphs_projected_ppg
+                p.projected_games = p.fangraphs_projected_games
+                fr, cr = fg_ratios.get(p.position, (0.7, 1.3))
+                p.total_floor = round(p.projected_total * fr, 1)
+                p.total_ceiling = round(p.projected_total * cr, 1)
     elif source == "model":
         for p in players:
             if p._model_projected_total > 0:

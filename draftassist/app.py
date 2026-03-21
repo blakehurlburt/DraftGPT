@@ -28,10 +28,12 @@ from draftsim.value import compute_dynamic_replacement_levels, compute_replaceme
 from draftsim.live_sim import SimSnapshot, run_live_simulation
 
 from .bridge import (
-    attach_sleeper_projections, build_player_index, config_from_sleeper_meta,
+    attach_fangraphs_projections, attach_sleeper_projections,
+    build_player_index, config_from_sleeper_meta,
     default_config_for_sport, rebuild_draft_state, rebuild_from_manual_picks,
     swap_projection_source,
 )
+from .fangraphs import fetch_fangraphs_projections
 from .recommender import get_recommendations
 from .scoring import extract_scoring_from_meta
 from .sleeper import fetch_all_players, fetch_draft_meta, fetch_draft_picks, fetch_projections
@@ -69,8 +71,9 @@ class DraftSession:
     sim_cancel: asyncio.Event = field(default_factory=asyncio.Event)
     sim_snapshot: dict | None = None
     # Projection source
-    projection_source: str = "model"  # "model" or "sleeper"
+    projection_source: str = "model"  # "model", "sleeper", or "fangraphs"
     sleeper_projections_matched: int = 0  # how many players have Sleeper data
+    fangraphs_projections_matched: int = 0  # how many players have FanGraphs data
     # Manual draft mode
     mode: str = "sleeper"  # "sleeper" or "manual"
     sport: str = "nfl"
@@ -665,20 +668,25 @@ async def set_risk_profile(
 @app.post("/api/projections")
 async def set_projection_source(
     session_id: str = Query(..., description="Session ID"),
-    source: str = Query("model", description="Projection source: model or sleeper"),
+    source: str = Query("model", description="Projection source: model, sleeper, or fangraphs"),
 ):
-    """Switch between model projections and Sleeper projections."""
+    """Switch between model, Sleeper, and FanGraphs projections."""
     sess = _get_session(session_id)
     if not sess.connected:
         return JSONResponse({"error": "Not connected to a draft"}, status_code=400)
 
-    valid = {"model", "sleeper"}
+    valid = {"model", "sleeper", "fangraphs"}
     if source not in valid:
         return JSONResponse({"error": f"Invalid source. Choose from: {valid}"}, status_code=400)
 
     if source == "sleeper" and sess.sleeper_projections_matched == 0:
         return JSONResponse(
             {"error": "Sleeper projections not available for this session"},
+            status_code=400,
+        )
+    if source == "fangraphs" and sess.fangraphs_projections_matched == 0:
+        return JSONResponse(
+            {"error": "FanGraphs projections not available for this session"},
             status_code=400,
         )
 
@@ -862,15 +870,25 @@ async def create_manual_draft(
         sessions.pop(session_id, None)
         return JSONResponse({"detail": str(e)}, status_code=400)
 
-    # For NFL, fetch Sleeper projections so the projection toggle works
+    # Fetch external projections for the projection toggle
     sleeper_matched = 0
+    fangraphs_matched = 0
     if sport == "nfl":
         try:
             async with httpx.AsyncClient(timeout=30) as client:
+                sleeper_players = await fetch_all_players(client)
                 sleeper_proj = await fetch_projections(client)
+            build_player_index(players, sleeper_players)  # sets sleeper_id on each player
             sleeper_matched = attach_sleeper_projections(players, sleeper_proj, scoring=None)
         except Exception:
             log.warning("Failed to fetch Sleeper projections for manual draft")
+    elif sport == "mlb":
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                fg_proj = await fetch_fangraphs_projections(client)
+            fangraphs_matched = attach_fangraphs_projections(players, fg_proj)
+        except Exception:
+            log.warning("Failed to fetch FanGraphs projections for manual draft")
 
     config = default_config_for_sport(sport, num_teams, roster_size)
 
@@ -926,6 +944,7 @@ async def create_manual_draft(
     sess.adp_order = _compute_adp_order(players, "consensus", sport=sport)
     sess.last_activity = time.monotonic()
     sess.sleeper_projections_matched = sleeper_matched
+    sess.fangraphs_projections_matched = fangraphs_matched
 
     meta = {"status": "complete" if state.is_complete else "in_progress"}
     payload = _build_state_payload(
@@ -955,6 +974,8 @@ async def create_manual_draft(
         "sport": sport,
         "sleeper_projections_available": sleeper_matched > 0,
         "sleeper_projections_matched": sleeper_matched,
+        "fangraphs_projections_available": fangraphs_matched > 0,
+        "fangraphs_projections_matched": fangraphs_matched,
     })
 
 
