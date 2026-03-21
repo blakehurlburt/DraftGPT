@@ -66,8 +66,7 @@ async def fetch_projections(
                 return json.load(f)
 
     resp = await client.get(
-        f"{BASE_URL}/v1/projections/nfl/{season}",
-        params={"season_type": "regular"},
+        f"{BASE_URL}/v1/projections/nfl/regular/{season}",
     )
     resp.raise_for_status()
     raw = resp.json()
