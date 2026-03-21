@@ -4,23 +4,28 @@ from __future__ import annotations
 
 
 def default_ppr_scoring() -> dict[str, float]:
-    """Standard PPR scoring multipliers."""
+    """Standard Sleeper PPR scoring multipliers."""
     return {
-        "pass_yd": 0.04,
+        # Passing
+        "pass_yd": 0.04,       # 1 point per 25 yards
         "pass_td": 4.0,
-        "pass_int": -1.0,
+        "pass_int": -2.0,
         "pass_2pt": 2.0,
+        # Rushing
         "rush_yd": 0.1,
         "rush_td": 6.0,
         "rush_2pt": 2.0,
-        "rec": 1.0,
+        # Receiving
+        "rec": 1.0,            # PPR
         "rec_yd": 0.1,
         "rec_td": 6.0,
         "rec_2pt": 2.0,
+        # Fumbles
         "fum_lost": -2.0,
-        # Kicker
-        "fgm": 3.0,
-        "fgmiss": -1.0,
+        # Kicker — distance-based FG scoring
+        "fgm_0_39": 3.0,      # computed: fgm - fgm_40_49 - fgm_50p
+        "fgm_40_49": 4.0,
+        "fgm_50p": 5.0,
         "xpm": 1.0,
         "xpmiss": -1.0,
         # DST
@@ -28,8 +33,11 @@ def default_ppr_scoring() -> dict[str, float]:
         "int": 2.0,
         "fum_rec": 2.0,
         "def_td": 6.0,
+        "def_kr_td": 6.0,     # kick return TD
+        "pr_td": 6.0,         # punt return TD
         "safe": 2.0,
         "blk_kick": 2.0,
+        "pts_allow_0": 10.0,  # shutout bonus (flag=1 when 0 pts allowed)
     }
 
 
@@ -65,6 +73,25 @@ def sleeper_stats_to_fantasy_points(
     """
     if scoring is None:
         scoring = default_ppr_scoring()
+
+    # --- Kicker FG distance handling ---
+    # Sleeper doesn't provide fgm_0_39 directly. Compute it when distance
+    # breakdowns are available so the scoring dict can price it correctly.
+    if "fgm_0_39" not in stats and "fgm_0_39" in scoring:
+        fgm_40_49 = float(stats.get("fgm_40_49", 0))
+        fgm_50p = float(stats.get("fgm_50p", 0))
+        fgm_total = stats.get("fgm")
+
+        if fgm_total is not None:
+            # Total FG exists — derive short-range FGs by subtraction
+            fgm_0_39 = float(fgm_total) - fgm_40_49 - fgm_50p
+            if fgm_0_39 > 0:
+                stats = {**stats, "fgm_0_39": fgm_0_39}
+        elif fgm_40_49 or fgm_50p:
+            # Distance breakdowns exist but no total — short-range FGs unknown,
+            # only score the distance buckets we have (no fgm_0_39 injected).
+            pass
+        # If neither total nor breakdowns exist, nothing to score.
 
     total = 0.0
     for stat_key, multiplier in scoring.items():

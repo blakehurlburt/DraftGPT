@@ -567,8 +567,8 @@ class TestSleeperScoring:
             "rush_td": 3,
         }
         pts = sleeper_stats_to_fantasy_points(stats)
-        # 4200*0.04 + 30*4 + 12*(-1) + 300*0.1 + 3*6 = 168+120-12+30+18 = 324
-        assert abs(pts - 324.0) < 0.1
+        # 4200*0.04 + 30*4 + 12*(-2) + 300*0.1 + 3*6 = 168+120-24+30+18 = 312
+        assert abs(pts - 312.0) < 0.1
 
     def test_default_ppr_rb(self):
         """An RB stat line with receptions (PPR)."""
