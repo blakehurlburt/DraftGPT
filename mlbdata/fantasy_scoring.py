@@ -16,6 +16,12 @@ BATTER_POINTS = {
     "H": 1,       # singles, doubles, triples, HRs each get base hit point
     "2B": 1,      # extra point for doubles (total 2 per double)
     "3B": 2,      # extra points for triples (total 3 per triple)
+    # CR opus: HR gets H(1) + HR(4) = 5 points total. A triple gets H(1) + 3B(2) = 3.
+    # CR opus: In standard ESPN scoring, HR is worth 4 total, not 5. If H already
+    # CR opus: includes HR, then the HR weight should be 3 (extra-base bonus), not 4.
+    # CR opus: This over-values HR hitters by ~1 point per HR across the season (e.g.,
+    # CR opus: a 40-HR player gets 40 extra phantom points). Since HR is a key stat,
+    # CR opus: this distorts projections meaningfully.
     # HR extra point handled via HR weight above
     "SO": -0.5,
     "GIDP": -0.5,

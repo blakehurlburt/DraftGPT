@@ -43,6 +43,10 @@ def extract_scoring_from_meta(meta: dict) -> dict[str, float] | None:
     if not scoring or not isinstance(scoring, dict):
         return None
     # Sleeper scoring_settings keys map directly to stat names
+    # CR opus: `if v` filters out scoring multipliers with value 0 or 0.0, but a league
+    # may intentionally set a category to 0 points (e.g., rec=0 for standard scoring).
+    # Filtering these out causes the default PPR value to be used for that category
+    # instead. Should use `if v is not None` instead of `if v`.
     return {k: float(v) for k, v in scoring.items() if v}
 
 

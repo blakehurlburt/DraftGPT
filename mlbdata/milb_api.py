@@ -15,6 +15,9 @@ BASE_URL = "https://statsapi.mlb.com/api/v1"
 CACHE_DIR = Path(__file__).parent.parent / "data" / "milb_cache"
 
 # MiLB level sport IDs used by the MLB Stats API
+# CR opus: Missing sport IDs for some MiLB levels: Foreign Rookie (17),
+# CR opus: Arizona Fall League (21), and others. Players who only appeared
+# CR opus: at these levels will be missing from the ID map and features.
 SPORT_IDS = {
     "AAA": 11,
     "AA": 12,
@@ -49,6 +52,8 @@ def _ensure_cache():
 
 def _get(url: str, params: dict | None = None, timeout: float = 15) -> dict:
     """Make a GET request to the MLB Stats API with a polite delay."""
+    # CR opus: Creating a new httpx.Client per request is wasteful — connection
+    # CR opus: pooling is lost. Consider a module-level or session-scoped client.
     time.sleep(_REQUEST_DELAY)
     with httpx.Client(timeout=timeout) as client:
         resp = client.get(url, params=params)
@@ -102,6 +107,9 @@ def fetch_player_stats(
     """
     _ensure_cache()
     cache_path = CACHE_DIR / "stats" / f"{mlb_api_id}_{group}.json"
+    # CR opus: Cache has no expiry — once written, stale data is served forever.
+    # CR opus: For active players, their stats grow each season but the cache is
+    # CR opus: never refreshed unless manually cleared via clear_stats_cache().
     if cache_path.exists():
         return json.loads(cache_path.read_text())
 
@@ -148,6 +156,10 @@ def fetch_draft(year: int) -> list[dict]:
     data = _get(f"{BASE_URL}/draft/{year}")
 
     picks = []
+    # CR opus: The MLB API returns drafts as a dict with a "rounds" key, but
+    # CR opus: data.get("drafts", {}) may return a list (multiple draft types),
+    # CR opus: not a dict. If the API changes shape, .get("rounds", []) silently
+    # CR opus: returns [] and no picks are cached.
     for rnd in data.get("drafts", {}).get("rounds", []):
         for pick in rnd.get("picks", []):
             picks.append(pick)

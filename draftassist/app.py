@@ -82,6 +82,10 @@ class DraftSession:
     config: LeagueConfig | None = None  # league config for manual mode
 
 
+# CR opus: Module-level mutable state — all sessions share the same `players` list
+# objects and Player instances in memory. Mutations in swap_projection_source or
+# attach_sleeper_projections on one session's players affect ALL sessions that
+# loaded the same player pool. Each session should own its own deep copy.
 sessions: dict[str, DraftSession] = {}
 _cleanup_task: asyncio.Task | None = None
 
@@ -259,6 +263,10 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
             "position": pm.get("position", ""),
             "team": pm.get("team", ""),
             "is_rookie": pname in rookie_names,
+            # CR opus: In manual mode, draft_slot is already 1-indexed (set in manual_pick),
+            # so this comparison is correct. But if manual mode ever changes to 0-indexed
+            # draft_slot, this will break. The "Sleeper uses 1-indexed" comment is misleading
+            # since this code path is also used for manual drafts.
             "is_user": p.get("draft_slot", -1) == user_slot + 1,  # Sleeper uses 1-indexed
         })
     recent = all_picks_list[-15:]
@@ -326,6 +334,9 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
         "team_needs": needs,
         "draft_status": meta.get("status", "unknown"),
         "projection_source": projection_source,
+        # CR opus: FanGraphs projections also use estimated floor/ceiling (synthesized
+        # from position ratios), but this flag only checks for "sleeper". Should also
+        # be True when projection_source == "fangraphs".
         "floor_estimated": projection_source == "sleeper",
         "available_rookies": available_rookies,
     }
@@ -531,6 +542,12 @@ def _ensure_poll_running(sess: DraftSession):
     if sess.poll_task is None or sess.poll_task.done():
         if sess.poll_task and sess.poll_task.done():
             # Log if it died with an exception
+            # CR opus: Calling .exception() on a done task that raised will re-raise
+            # the exception if it hasn't been retrieved yet. This is wrapped in a
+            # conditional so it's fine, but note that the poll loop's `while True`
+            # with bare `except Exception` means it should never actually die —
+            # only CancelledError would escape. If it does die, this restarts it
+            # with no limit, which could cause infinite rapid restart loops.
             exc = sess.poll_task.exception() if not sess.poll_task.cancelled() else None
             if exc:
                 log.error("Poll task died with exception: %s", exc)
@@ -1003,6 +1020,10 @@ async def manual_pick(
     session_id: str = Query(...),
     player_name: str = Query(..., description="Exact player name"),
 ):
+    # CR opus: No concurrency guard — if two rapid /api/pick calls arrive for the same
+    # session, both will read draft_state.available, both may find the same player,
+    # and both may call make_pick. The `await _cancel_sim` below yields control,
+    # creating a window for interleaving. Consider an asyncio.Lock per session.
     """Enter a pick in manual draft mode."""
     sess = _get_session(session_id)
     if sess.mode != "manual":

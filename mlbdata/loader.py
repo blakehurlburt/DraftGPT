@@ -14,6 +14,11 @@ DATA_DIR = Path(__file__).parent.parent / "data" / "lahman_1871-2025_csv"
 ZIP_PATH = Path(__file__).parent.parent / "data" / "lahman_1871-2025_csv.zip"
 
 # Lahman uses historical 3-char codes; map to modern abbreviations
+# CR opus: Missing Lahman codes: "HAR" (Hartford), "MLU" (Milwaukee NL, not MIL),
+# CR opus: and most importantly "CLE"→"CLE" is stale — Cleveland rebranded to
+# CR opus: "Guardians" in 2022 but the abbreviation stayed "CLE" so this is fine.
+# CR opus: However, there is no mapping for the A's move to Sacramento/Las Vegas
+# CR opus: if/when the Lahman DB adds a new code.
 TEAM_CODE_MAP = {
     "ANA": "LAA", "CAL": "LAA", "MON": "WSN", "FLO": "MIA",
     "TBA": "TB",  "KCA": "KC",  "SLN": "STL", "SFN": "SF",

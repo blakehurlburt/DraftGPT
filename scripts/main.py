@@ -2,6 +2,8 @@ import nfldata
 
 
 def main():
+    # CR opus: Hardcoded seasons list [2023, 2024] — the 2025 season is now complete.
+    # CR opus: This demo script should use current/recent seasons dynamically.
     seasons = [2023, 2024]
 
     # 1. Player game log

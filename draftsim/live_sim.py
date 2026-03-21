@@ -117,6 +117,10 @@ async def run_live_simulation(
     # Also track baseline (no forced pick) per strategy
     baseline: dict[str, list[float]] = {s: [] for s in strategies}
 
+    # CR opus: sims_target is set to max_sims, but the actual total work is
+    # max_sims * len(strategies) * (len(candidates) + 1). The progress reporting
+    # (sims_completed / sims_target) will appear to complete at 100% but is actually
+    # measuring only the outer sim loop, not the inner candidate * strategy loops.
     total_sims = max_sims
     snapshot = SimSnapshot(sims_completed=0, sims_target=total_sims)
 
@@ -126,13 +130,26 @@ async def run_live_simulation(
 
         batch_end = min(batch_start + batch_size, total_sims)
 
+        # CR opus: _run_batch is a closure that captures batch_start and batch_end by
+        # reference. Since it's passed to asyncio.to_thread and awaited immediately,
+        # this is fine. But if the code were ever changed to not await (e.g. fire-and-forget),
+        # all batches would use the last loop's values. Also, raw_results and baseline
+        # dicts are mutated from the thread without locks — safe only because the await
+        # ensures sequential execution.
         def _run_batch():
             for sim_idx in range(batch_start, batch_end):
                 if cancel_event.is_set():
                     return
 
+                # CR opus: rng is captured from the outer scope (closure). Since _run_batch
+                # runs in a thread via asyncio.to_thread, and rng.integers() mutates rng's
+                # internal state, this is a race condition if run_live_simulation is called
+                # concurrently. Each call should get its own independent RNG.
                 sim_rng = np.random.default_rng(rng.integers(0, 2**63))
 
+                # CR opus: sorted_players is recomputed on every sim iteration but
+                # CR opus: players list never changes — this is an O(n log n) sort
+                # CR opus: repeated max_sims times. Should sort once outside the loop.
                 # Fresh ADP noise
                 sorted_players = sorted(players, key=lambda p: p.projected_total, reverse=True)
                 if opponent_platform == "consensus":
@@ -151,6 +168,11 @@ async def run_live_simulation(
 
                     # Sim each candidate as forced first pick
                     for cand in candidates:
+                        # CR opus: Each candidate sim creates a new opponent RNG from
+                        # sim_rng, but sim_rng is shared across all candidates in this
+                        # loop iteration. The RNG state changes after each candidate,
+                        # meaning later candidates get different opponent randomness than
+                        # earlier ones within the same sim_idx. This biases comparisons.
                         opp2 = ADPOpponent(adp, np.random.default_rng(sim_rng.integers(0, 2**63)))
                         total = _run_single_sim(
                             state, user_slot, cand, strategy_fn,

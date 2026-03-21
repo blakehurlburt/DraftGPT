@@ -90,6 +90,9 @@ def fetch_all_stats(players_info: dict[int, str], verbose: bool = True):
         try:
             fetch_player_stats(pid, group=group, levels=STAT_LEVELS)
         except Exception:
+            # CR opus: Silently swallowing all exceptions here means network errors,
+            # CR opus: rate limits, and malformed data are invisible. At minimum, count
+            # CR opus: failures and report a summary at the end.
             pass
 
 
@@ -112,6 +115,8 @@ def main():
     parser = argparse.ArgumentParser(description="Fetch MiLB stats from MLB Stats API")
     parser.add_argument("--start-year", type=int, default=2015,
                         help="First season to fetch (default: 2015)")
+    # CR opus: Default end-year is hardcoded to 2025. For the 2026 season this should
+    # CR opus: be 2026, or better, derive from datetime.date.today().year.
     parser.add_argument("--end-year", type=int, default=2025,
                         help="Last season to fetch (default: 2025)")
     parser.add_argument("--skip-stats", action="store_true",

@@ -38,6 +38,8 @@ def fetch_latest_rosters(season=None):
     ]).rename({"full_name": "player_name"})
 
     # Only keep offensive skill positions relevant to fantasy
+    # CR opus: This filters out DST/DEF players entirely. project_2026_v2.py generates
+    # CR opus: DST projections but won't find them in rosters.csv since they're excluded here.
     rosters = rosters.filter(
         pl.col("position").is_in(["QB", "RB", "WR", "TE", "K"])
     )
@@ -73,6 +75,8 @@ def write_rosters(df):
 
 def show_diff(old, new):
     """Print differences between old and new rosters."""
+    # CR opus: Keying on player_name alone will collide when two players share the same
+    # CR opus: name (e.g., multiple "Mike Williams"). Should key on gsis_id instead.
     old_dict = {r["player_name"]: r for r in old.iter_rows(named=True)}
     new_dict = {r["player_name"]: r for r in new.iter_rows(named=True)}
 
@@ -126,10 +130,15 @@ def main():
 
     if args.keep_manual:
         old = load_existing_overrides()
+        # CR opus: If the old CSV has no "status" column (e.g., corrupted/empty file),
+        # CR opus: this filter will raise a ColumnNotFoundError with no helpful message.
         # Keep manually-set CUT/RET/TRADE rows that aren't in nflverse
         manual_rows = old.filter(pl.col("status").is_in(["CUT", "RET", "TRADE"]))
         if manual_rows.shape[0] > 0:
             manual_names = manual_rows["player_name"].to_list()
+            # CR opus: Filtering by player_name is fragile — a manual "CUT" for "Josh Allen (QB)"
+            # CR opus: would also remove a different "Josh Allen (TE)" from the new roster.
+            # CR opus: Should filter by gsis_id instead.
             new_rosters = new_rosters.filter(~pl.col("player_name").is_in(manual_names))
             # Resolve gsis_id for manual rows if missing
             if "gsis_id" not in manual_rows.columns:

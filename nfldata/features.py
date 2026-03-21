@@ -255,6 +255,12 @@ def _compute_opponent_features(df):
         .sort(["opponent_team", "season", "week"])
     )
 
+    # CR opus: rolling_mean(window_size=20) is NOT an expanding mean — it only
+    # looks at the last 20 games. For a 17-game season this effectively IS
+    # expanding (max 17 games), but the intent described in the comment says
+    # "expanding mean." If this were ever used across seasons, it would be wrong.
+    # Also, the shift(1) + rolling_mean chain operates on the sorted order within
+    # each over() partition, which depends on prior sort() being stable.
     # Compute expanding mean of pts_allowed up to (but not including) current week
     opp_allowed = opp_allowed.with_columns(
         pl.col("pts_allowed")

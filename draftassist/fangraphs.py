@@ -45,6 +45,10 @@ async def fetch_fangraphs_projections(
             with open(cache_path) as f:
                 return json.load(f)
 
+    # CR opus: The `system` parameter is user-supplied (via query param) and is passed
+    # directly into the FanGraphs URL without validation. Should validate against
+    # known systems (steamer, zips, atc, thebatx, fangraphsdc) to prevent unexpected
+    # API calls or cache-path injection (e.g., system="../../etc/passwd").
     params = {
         "type": system,
         "pos": "all",
@@ -52,6 +56,8 @@ async def fetch_fangraphs_projections(
         "players": "0",
     }
 
+    # CR opus: These two requests are sequential but independent — they could be
+    # fetched concurrently with asyncio.gather for ~2x speedup.
     bat_resp = await client.get(BASE_URL, params={**params, "stats": "bat"})
     bat_resp.raise_for_status()
     batters = bat_resp.json()
@@ -67,6 +73,10 @@ async def fetch_fangraphs_projections(
 
     combined = batters + pitchers
 
+    # CR opus: If the first request succeeds but the second fails (raise_for_status),
+    # no data is cached and no partial result is returned. The caller gets an unhandled
+    # httpx.HTTPStatusError. Consider caching batters/pitchers separately or handling
+    # partial failures gracefully.
     with open(cache_path, "w") as f:
         json.dump(combined, f)
 

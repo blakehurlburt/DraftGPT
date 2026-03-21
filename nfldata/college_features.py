@@ -74,6 +74,9 @@ def _fetch_player_stats(
         },
         timeout=15,
     )
+    # CR opus: Unbounded recursion on 429s — if the API keeps returning 429,
+    # this will recurse until stack overflow. Should add a retry counter/limit
+    # and exponential backoff.
     if resp.status_code == 429:
         time.sleep(2)
         return _fetch_player_stats(player_name, team, year, category, api_key)
@@ -98,6 +101,9 @@ def fetch_college_stats_for_team(
             try:
                 results = _fetch_player_stats("", team, year, cat, api_key)
             except Exception:
+                # CR opus: Silently swallows ALL exceptions including network errors,
+                # auth failures (401/403), and server errors (500). At minimum, log
+                # the error. A 401 (bad API key) should fail fast, not silently skip.
                 continue
 
             for entry in results:
@@ -145,8 +151,16 @@ def fetch_all_college_stats(
     if api_key is None:
         api_key = _get_api_key()
     if not api_key:
+        # CR opus: Silently returns empty dict when API key is missing. Callers
+        # have no way to distinguish "no college stats found" from "API key not
+        # configured." Should log a warning or raise so the user knows to set
+        # CFBD_API_KEY.
         return {}
 
+    # CR opus: When the cache is valid, this returns the ENTIRE cached dict
+    # regardless of what players were requested. If a second call requests
+    # different players, they get stale/irrelevant cached data. The cache
+    # key should incorporate the player list or be invalidated accordingly.
     if cache:
         cached = _load_cache()
         if cached:
@@ -161,6 +175,9 @@ def fetch_all_college_stats(
 
     all_stats: dict[str, dict] = {}
     # Determine year range
+    # CR opus: Hardcoded [2024] fallback — should use current year dynamically.
+    # Also, the generator filter (if p.get("seasons")) means if NO players have
+    # a "seasons" key, max() will get an empty iterable and raise ValueError.
     current_year = max(p.get("seasons", [2024])[-1] for p in players if p.get("seasons"))
     years = list(range(current_year - 3, current_year + 1))
 
@@ -174,6 +191,11 @@ def fetch_all_college_stats(
                 if name in team_stats:
                     all_stats[name] = team_stats[name]
                 else:
+                    # CR opus: Last-name-only matching is ambiguous — common last names
+                    # (e.g., "Smith", "Johnson") on the same team could match the wrong
+                    # player. Also, `stats` shadows the outer `all_stats` variable name
+                    # from the dict comprehension; using a different variable name would
+                    # improve clarity.
                     # Try matching by last name
                     last = name.split()[-1] if name else ""
                     for fetched_name, stats in team_stats.items():
@@ -224,6 +246,10 @@ def build_college_features(
         stats = cached.get(name, {})
 
         # Compute per-game features
+        # CR opus: college_games is initialized to 0 in fetch_college_stats_for_team
+        # and never incremented — it's always 0. So max(0, 1) always returns 1,
+        # meaning per-game features are actually career totals. The games count
+        # is never populated from the API response.
         games = max(stats.get("college_games", 0), 1)  # avoid div by zero
 
         rows.append({

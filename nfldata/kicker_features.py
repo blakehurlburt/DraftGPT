@@ -177,6 +177,10 @@ def _build_kicker_prior_features(df):
         pl.col("_max_games").shift(1).fill_null(0).cum_sum()
         .over("player_id").alias("_cum_max_games")
     )
+    # CR opus: Same division-by-zero issue as season_features.py — _cum_max_games
+    # CR opus: is 0 for a player's first season row (shift(1).fill_null(0).cum_sum()
+    # CR opus: starts at 0), producing inf. Row is filtered out by prior1_ppg check,
+    # CR opus: but if filtering logic changes, inf values will leak into the model.
     df = df.with_columns(
         (pl.col("_cum_games") / pl.col("_cum_max_games")).alias("career_games_rate")
     )
@@ -252,6 +256,10 @@ def _add_kicker_metadata(df, seasons):
     rosters = rosters.rename({"gsis_id": "player_id"})
 
     if "birth_date" in rosters.columns:
+        # CR opus: pl.date(pl.col("season"), 9, 1) constructs a date from column
+        # values. If "season" is an integer type (e.g., Int32), this should work,
+        # but if birth_date is a string column (not Date type), the subtraction
+        # will fail at runtime. No dtype guard for birth_date.
         rosters = rosters.with_columns(
             ((pl.date(pl.col("season"), 9, 1) - pl.col("birth_date")).dt.total_days() / 365.25)
             .round(1)

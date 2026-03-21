@@ -33,6 +33,8 @@ def run_model(df, feature_cols_fn, max_games, label):
     print(f"  {label} Model")
     print(f"{'='*60}")
 
+    # CR opus: walk_forward_eval in modelcore uses X_test as early-stopping eval_set,
+    # CR opus: leaking test labels into training (see modelcore/season_model.py comments).
     print(f"\n--- Walk-Forward Evaluation ({label}s) ---")
     walk_forward_eval(df, feature_cols_fn, max_games)
 

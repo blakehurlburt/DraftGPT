@@ -20,6 +20,9 @@ class SimulationConfig:
     """Configuration for Monte Carlo draft simulation."""
 
     league: LeagueConfig = field(default_factory=LeagueConfig)
+    # CR opus: 5000 sims * 12 slots * 3 strategies = 180,000 full drafts. Each draft is
+    # ~180 picks with O(n) list.remove(). This is very slow. Consider reducing default
+    # or adding early stopping based on convergence of mean/std.
     num_simulations: int = 5000
     user_slots: list[int] | None = None  # None = all slots (0-indexed)
     strategies: list[str] = field(default_factory=lambda: ["vbd"])
@@ -33,6 +36,9 @@ def _generate_adp_for_sim(
     rng: np.random.Generator,
 ) -> dict[str, float]:
     """Generate fresh noisy ADP for a single simulation run."""
+    # CR opus: "consensus" is already in PLATFORMS set, so the first branch is redundant
+    # with the elif. Both generate_consensus_adp and generate_platform_adp("consensus")
+    # do the same thing. Not a bug, but unnecessary branching.
     if platform == "consensus":
         entries = generate_consensus_adp(players, rng)
     elif platform in PLATFORMS:
@@ -151,7 +157,11 @@ def run_simulation(
 
                 # Store sample rosters for reporting
                 if sim_idx < 3:
-                    # Re-run to capture roster (cheap for first 3)
+                    # CR opus: Re-running the entire draft to capture the roster is wasteful.
+                    # _run_single_sim already has the final state — it could return the roster
+                    # alongside the lineup total. Also, opponent2 uses a DIFFERENT RNG seed
+                    # than the original sim, so this "sample roster" may differ from the
+                    # actual sim that produced the score. The roster and score are decoupled.
                     state2 = DraftState.create(config, players)
                     opponent2 = ADPOpponent(adp, np.random.default_rng(sim_rng.integers(0, 2**31)))
                     while not state2.is_complete:

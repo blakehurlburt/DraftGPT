@@ -126,6 +126,9 @@ class DraftState:
         return self.config.total_picks
 
     def available_at_position(self, position: str) -> list[Player]:
+        # CR opus: Docstring says "sorted by projected_total desc" but the implementation
+        # does NOT sort — it relies on state.available preserving initial load order.
+        # This is fragile; either sort explicitly or fix the docstring.
         """Get available players at a position, sorted by projected_total desc."""
         return [p for p in self.available if p.position == position]
 

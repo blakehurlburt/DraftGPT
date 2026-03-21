@@ -34,6 +34,10 @@ def _force_need_pick(state: DraftState, team_idx: int, eligible: list[Player]) -
     remaining = state.picks_remaining(team_idx)
 
     # Count mandatory needs (not FLEX since it's flexible)
+    # CR opus: K and DST are included in mandatory needs, so a team that hasn't drafted
+    # a K or DST yet will be forced to take them before best-available skill players in
+    # late rounds. This is arguably correct (must fill the roster), but it means the
+    # strategy can't intentionally punt K/DST to the very last picks.
     mandatory = {k: v for k, v in needs.items() if k != "FLEX"}
     mandatory_count = sum(mandatory.values())
 
@@ -80,6 +84,7 @@ def _dynamic_repl(state: DraftState, players: list[Player] | None = None) -> dic
 
 def pick_vbd(state: DraftState, team_idx: int, players: list[Player] | None = None, **kwargs) -> Player:
     """Value Based Drafting — highest value over replacement."""
+    # CR opus: Same empty-eligible risk as pick_bpa — max() on empty list crashes.
     eligible = _eligible(state, team_idx)
     forced = _force_need_pick(state, team_idx, eligible)
     if forced:
@@ -128,6 +133,12 @@ def pick_vona(
 
     def _score(p):
         discount = marginal_value_discount(p, roster, state.config)
+        # CR opus: VONA is the same for ALL players at the same position (it measures
+        # positional drop-off, not player-specific value). This means two WRs with
+        # different VBD but identical VONA get the same VONA boost. The VONA term
+        # effectively just biases toward the position with the steepest drop-off,
+        # but the actual player selection within that position is driven solely by VBD.
+        # This is arguably correct behavior, but worth noting.
         return (vbd(p, replacement) * discount
                 + pos_vona_cache.get(p.position, 0.0) * weight
                 + _var_bonus(p, state, team_idx, risk))

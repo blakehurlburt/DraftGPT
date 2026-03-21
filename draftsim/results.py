@@ -18,6 +18,11 @@ def compute_optimal_lineup(roster: list[Player], config: LeagueConfig) -> tuple[
     flex_count = config.num_flex()
 
     # Group roster by position
+    # CR opus: Hardcoded NFL positions. MLB positions (C, 1B, 2B, etc.) will be silently
+    # CR opus: dropped, making compute_optimal_lineup return an empty lineup for MLB drafts.
+    # CR opus: Should derive position keys from config or the roster itself.
+    # CR opus: Since simulation results drive strategy comparisons, this means MLB draft
+    # CR opus: simulations always return total=0, making all strategies look equivalent.
     by_pos: dict[str, list[Player]] = {"QB": [], "RB": [], "WR": [], "TE": [], "K": [], "DST": []}
     for p in roster:
         if p.position in by_pos:
@@ -38,6 +43,9 @@ def compute_optimal_lineup(roster: list[Player], config: LeagueConfig) -> tuple[
             used.add(player.name)
 
     # Fill FLEX with best remaining RB/WR/TE
+    # CR opus: The `used` set tracks by player name, but two different players could
+    # share the same name (unlikely but possible). Using player identity (id(p) or the
+    # Player object itself) would be safer.
     flex_candidates = []
     for pos in config.flex_positions():
         start_idx = starters.get(pos, 0)
@@ -175,6 +183,11 @@ def format_position_composition(results: dict, rosters: dict) -> str:
 
     for strat in strategies:
         pos_counts = {pos: [] for pos in all_pos}
+        # CR opus: Nested loop bug — the outer loop iterates over all (slot, strategy)
+        # result keys matching this strat, and for EACH one, the inner loop iterates
+        # over ALL rosters matching this strat. This means each roster is counted once
+        # per matching slot, inflating the sample size by a factor of len(slots).
+        # The outer loop over results.items() is unnecessary; just iterate rosters directly.
         for (slot, s), _ in results.items():
             if s != strat:
                 continue

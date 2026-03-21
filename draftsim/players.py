@@ -8,6 +8,10 @@ from pathlib import Path
 
 
 # Normalise team abbreviations so all code uses a single canonical form
+# CR opus: Only "LA"->"LAR" is normalised here, but adp.py has a separate
+# _TEAM_ALIASES = {"JAC": "JAX"}. These two maps are not shared, so if the
+# projections CSV uses "JAC" it won't be normalised, and if the ADP CSV uses
+# "LA" it won't be normalised either. Both maps should be unified.
 _TEAM_NORMALIZE = {"LA": "LAR"}
 
 

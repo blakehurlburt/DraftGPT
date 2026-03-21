@@ -11,6 +11,9 @@ class LeagueConfig:
 
     num_teams: int = 12
     roster_size: int = 15
+    # CR opus: roster_size=15 but lineup sums to 9 starters (QB:1+RB:2+WR:2+TE:1+FLEX:1+K:1+DST:1).
+    # That leaves 6 bench spots, which is fine, but nothing enforces roster_size >= sum(lineup).
+    # If someone sets roster_size=8, the draft ends before filling all starter slots.
     lineup: dict = field(
         default_factory=lambda: {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "FLEX": 1, "K": 1, "DST": 1}
     )

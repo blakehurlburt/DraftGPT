@@ -250,6 +250,10 @@ def vbd_score(
     VORP provides the base value signal, VONA adds positional urgency,
     and VOLS adds starter-tier scarcity context.
     """
+    # CR opus: VORP, VONA, and VOLS have very different scales — VORP can be 100+,
+    # VONA is typically 5-20, and VOLS depends on the gap to last starter. Summing
+    # them without normalisation means VORP dominates and VONA/VOLS contribute
+    # minimally. Consider weighting or normalising each component.
     return max(0.0, vorp_val) + max(0.0, vona_val) + max(0.0, vols_val)
 
 
@@ -273,11 +277,11 @@ def _pick_probability(
     round_frac = (current_round - 1) / max(total_rounds - 1, 1)
     spread = 3.0 + 9.0 * round_frac          # 3 early → 12 late
     midpoint = gap_size - 1                   # picks that happen in the gap
-    # CR opus: When gap_size == 1 (opponent picks once before our next turn), midpoint=0
-    # and this returns 0.0, meaning we predict zero chance anyone is taken. But with
-    # gap_size=1 there IS one pick happening. The check should be `if midpoint < 0`
-    # or the sigmoid should handle midpoint=0 naturally (it would give ~0.5 probability
-    # for adp_position=0, which is reasonable).
+    # CR opus: When gap_size == 1 (one opponent picks before our next turn), midpoint=0
+    # CR opus: and this returns 0.0, meaning we predict zero chance anyone is taken. But
+    # CR opus: gap_size=1 means one pick DOES happen. This makes VONA always return 0.0
+    # CR opus: when there's only one pick between our turns (e.g., in a 2-team draft or
+    # CR opus: near the turn in a snake draft). The fix: change to `if midpoint < 0`.
     if midpoint <= 0:
         return 0.0
     x = (adp_position - midpoint) / max(spread, 0.1)
@@ -394,6 +398,10 @@ def vona(
 
     # Probability-weighted expected value after the gap
     # Each player at this position has a probability of being taken
+    # CR opus: The survival probabilities are computed independently per player, but in
+    # reality picks are correlated — if one RB is taken, the probability of another RB
+    # being taken decreases (teams have caps/needs). Independent survival overestimates
+    # the expected drop-off, making VONA systematically too aggressive.
     remaining_values: list[tuple[float, float]] = []  # (projected, survival_prob)
     for p in available_at_pos:
         adp_position = adp_pos_map.get(p.name, len(available_names))
@@ -411,6 +419,11 @@ def vona(
     # Sort by projected descending (already sorted), take weighted top-K
     weighted_sum = 0.0
     weight_sum = 0.0
+    # CR opus: This weighted top-K algorithm treats survival probability as a fractional
+    # "slot occupancy". E.g. if the best player has 0.3 survival, it fills 0.3 of the
+    # first K-slot. This is an unusual approximation — it means a player with 10%
+    # survival still contributes significantly if K=3. A more standard approach would
+    # be to compute the expected value of the order statistics under Bernoulli survival.
     for val, surv in remaining_values:
         if weight_sum >= k:
             break
@@ -464,6 +477,9 @@ def variance_bonus(
     # Maps round fraction [0, 1] to a preference in [-1, 1].
     # Early rounds → negative (prefer floor), late → positive (prefer ceiling).
     round_frac = (current_round - 1) / max(total_rounds - 1, 1)
+    # CR opus: round_pref range is asymmetric: [-0.7, +1.3] not [-1, +1]. At round 15/15,
+    # round_frac=1.0, round_pref=(1.0-0.35)*2=1.3, which exceeds 1.0. Combined with
+    # the 0.4 weight, this makes late-round ceiling preference stronger than intended.
     round_pref = (round_frac - 0.35) * 2  # ~-0.7 early, ~+1.3 late, 0 around round 6
 
     # --- 2. Portfolio diversity at this position ---

@@ -61,6 +61,9 @@ def main():
         "--seed", type=int, default=42,
         help="Random seed for reproducibility"
     )
+    # CR opus: Relative path default means this only works when run from the project root.
+    # CR opus: If run from scripts/ or any other cwd, it won't find the file. Consider
+    # CR opus: using Path(__file__).parent / "data/projections/all_projections.csv".
     parser.add_argument(
         "--projections", type=str, default="data/projections/all_projections.csv",
         help="Path to projections CSV"

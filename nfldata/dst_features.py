@@ -57,6 +57,10 @@ def _compute_dst_fpts(row):
     safeties = row.get("def_safeties", 0) or 0
     pts_allowed = row.get("pts_allowed", 0) or 0
 
+    # CR opus: Missing standard DST scoring components: blocked kicks (typically 2 pts),
+    # CR opus: kick/punt return TDs (6 pts), and forced fumbles (distinct from fumble
+    # CR opus: recoveries in some leagues). This underestimates total DST fantasy points
+    # CR opus: by ~0.5-1.0 ppg for elite special teams units.
     pts = (
         sacks * 1
         + ints * 2
@@ -96,12 +100,17 @@ def _aggregate_dst_to_season(seasons):
     opp_scoring = ts.select([
         pl.col("team").alias("_join_team"),
         "season", "week",
-        # CR opus: This double-counts TDs: (passing_tds + rushing_tds) * 7 already
-        # awards 7 points per TD (6 for TD + assumed 1 for PAT), but then
-        # pat_made * 1 adds another point for each PAT. Also, def_tds * 6 + safeties * 2
-        # are for the scoring team's defense, not the opponent's offense — they should
-        # not be added to "opponent offensive points." The result systematically
-        # over-estimates pts_allowed.
+        # CR opus: TWO bugs in pts_allowed calculation:
+        # CR opus: 1. Double-counts PATs: (passing_tds + rushing_tds) * 7 already includes
+        # CR opus:    the assumed extra point (6+1=7), but pat_made * 1 adds it again.
+        # CR opus:    This inflates pts_allowed by ~3-5 points per game.
+        # CR opus: 2. def_tds and def_safeties are SCORED BY this team's defense, not
+        # CR opus:    points scored by the opponent's offense. Including them as "opponent
+        # CR opus:    offensive points" inflates pts_allowed further. For DSTs with good
+        # CR opus:    defenses (who score more def_tds), this paradoxically penalizes their
+        # CR opus:    own pts_allowed tier score.
+        # CR opus: Combined, a team allowing 21 real points could show as 27-30 pts_allowed,
+        # CR opus: pushing it into a worse fantasy tier (-1 instead of 0).
         (
             (pl.col("passing_tds").fill_null(0) + pl.col("rushing_tds").fill_null(0)) * 7
             + pl.col("fg_made").fill_null(0) * 3
@@ -119,6 +128,10 @@ def _aggregate_dst_to_season(seasons):
         right_on=["_join_team", "season", "week"],
         how="left",
     )
+    # CR opus: fill_null(21.0) is an arbitrary fallback for missing opponent data.
+    # 21 points maps to the 21-27 tier (0 fantasy points), so nulls are treated as
+    # "average." This silently hides data quality issues — consider logging when
+    # nulls are encountered.
     ts = ts.with_columns(pl.col("_opp_pts").fill_null(21.0).alias("pts_allowed"))
 
     def_cols = [
@@ -218,6 +231,9 @@ def _build_dst_prior_features(df):
         .over("player_id")
         .alias("_cum_seasons"),
     ])
+    # CR opus: DST teams always play all games — career_games_rate will always be
+    # close to 1.0 (32 teams * full season). This feature is meaningful for players
+    # (injury-prone = fewer games) but not for DSTs. It's dead weight in the model.
     df = df.with_columns(
         pl.col("season").map_elements(
             lambda s: 17 if s >= 2021 else 16, return_dtype=pl.Int64

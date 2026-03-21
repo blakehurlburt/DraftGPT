@@ -20,6 +20,9 @@ from nfldata.college_features import fetch_all_college_stats, _load_cache
 
 def main():
     # Load combine data for recent years to get player/school pairs
+    # CR opus: Upper bound 2027 means this will try to load combine data for 2026 draft
+    # CR opus: class, which may not exist yet (combine is in Feb/Mar). If nflreadpy returns
+    # CR opus: empty data for future years this silently produces no players for that year.
     years = list(range(2020, 2027))
     print(f"Loading combine data for {years[0]}-{years[-1]}...")
     combine = nfl.load_combine(years)
@@ -48,6 +51,9 @@ def main():
     if cached:
         print(f"Cache exists with {len(cached)} players. Refreshing...")
 
+    # CR opus: No error handling if CFBD_API_KEY env var is not set. The docstring mentions
+    # CR opus: it's required, but fetch_all_college_stats will likely fail with an opaque
+    # CR opus: HTTP 401 rather than a clear "API key not set" message.
     # Fetch (uses cache if fresh, otherwise hits API)
     stats = fetch_all_college_stats(players, cache=True)
     print(f"Done! Cached stats for {len(stats)} players")

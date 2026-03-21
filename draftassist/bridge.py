@@ -462,6 +462,9 @@ def swap_projection_source(players: list[Player], source: str) -> None:
                 p.total_ceiling = round(p.projected_total * cr, 1)
     elif source == "model":
         for p in players:
+            # CR opus: Accessing p._model_projected_total will raise AttributeError if
+            # attach_sleeper_projections or attach_fangraphs_projections was never called
+            # (the _model_* attributes are only set in those functions).
             if p._model_projected_total > 0:
                 p.projected_total = p._model_projected_total
                 p.projected_ppg = p._model_projected_ppg

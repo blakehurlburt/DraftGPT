@@ -107,6 +107,10 @@ def top_n_picks(
         strategy_kwargs["adp_order"] = adp_order
     strategy_kwargs["risk_profile"] = risk_profile
 
+    # CR opus: This mutates state.available in-place during the loop and restores it
+    # afterward. If an unhandled exception occurs between removal and restore (e.g., in
+    # _compute_strategy_score or vbd_score), state.available will be left in a corrupted
+    # state with some players missing. Consider using a try/finally block for the restore.
     # Save original available list
     original_available = list(state.available)
     picks: list[Recommendation] = []

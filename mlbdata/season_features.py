@@ -18,6 +18,12 @@ MAX_GAMES_PITCHER = 162  # appearances, not starts
 # evaluation. Removing it entirely means 2021 prior-season features
 # fall back to 2019 via the shift mechanism, which is more representative
 # than a 60-game sample.
+# CR opus: Excluding 2020 creates a gap in the shift(1)/shift(2) operations.
+# CR opus: For a player with data in 2019 and 2021, shift(1) for 2021 gives
+# CR opus: the 2019 row (correct), but shift(2) gives 2018 — the "2-year avg"
+# CR opus: is actually 2019+2018, not 2019+2018. This is only subtly wrong but
+# CR opus: the "trend" features (shift(1) - shift(2)) measure a 2-year gap
+# CR opus: instead of 1-year, making trends appear compressed.
 EXCLUDED_SEASONS = {2020}
 
 # Minimum games to include a player in the dataset
@@ -188,6 +194,9 @@ def _build_pitcher_seasons(seasons):
         .then(pl.col("BB") / pl.col("BFP"))
         .otherwise(0.0).alias("BB_rate"),
         # CR opus: FIP formula omits HBP — standard FIP is (13*HR + 3*(BB+HBP) - 2*K)/IP + constant.
+        # CR opus: Missing HBP systematically underestimates FIP for pitchers who hit many
+        # CR opus: batters (~0.1-0.3 FIP impact for high-HBP pitchers). Also, the FIP constant
+        # CR opus: 3.2 is approximate — varies by year from ~3.10 to ~3.20.
         # FIP: (13*HR + 3*BB - 2*K)/IP + 3.2 (constant approximation)
         pl.when(pl.col("IP") > 0)
         .then(
@@ -370,6 +379,15 @@ def _build_prior_features_batter(df):
     """Build prior-season features for batters."""
     df = df.sort(["player_id", "season"])
 
+    # CR opus: Unlike NFL season_features._build_prior_features(), this function does NOT
+    # CR opus: validate season gaps. shift(1) gives the previous row's stats regardless
+    # CR opus: of how many years apart they are. With EXCLUDED_SEASONS={2020}, a player's
+    # CR opus: 2021 row gets 2019 stats as "prior1" (correct — 2020 excluded), but
+    # CR opus: shift(2) for 2021 gives 2018 stats. The "2-year avg" is then (2019+2018)/2
+    # CR opus: and the "trend" is 2019-2018, spanning 3 calendar years. More importantly,
+    # CR opus: for a player who missed 2019 entirely (injury) and played 2018 and 2021,
+    # CR opus: shift(1) gives 2018 stats as if they were from the immediately prior year.
+    # CR opus: Consider adding season gap validation like the NFL pipeline does.
     # Stats to lag
     rate_stats = [
         "ppg", "AVG", "OBP", "SLG", "OPS", "ISO", "BABIP",
@@ -391,6 +409,11 @@ def _build_prior_features_batter(df):
 
     # --- Prior 2-year average ---
     # When only 1 prior season exists (sophomore), fall back to prior1 value
+    # CR opus: The .over("player_id") inside the .then() branch applies the window
+    # CR opus: ONLY to the then-expression, but the .when() condition also uses
+    # CR opus: .over("player_id") separately. In recent polars versions this can cause
+    # CR opus: "different groups" errors. Safer to compute the shifted columns first
+    # CR opus: and then do the when/then on the pre-computed columns.
     avg2_stats = ["ppg", "AVG", "OBP", "SLG", "OPS", "ISO", "hr_pg", "rbi_pg", "sb_pg"]
     prior2_exprs = []
     for stat in avg2_stats:
@@ -420,6 +443,12 @@ def _build_prior_features_batter(df):
             )
     df = df.with_columns(trend_exprs)
 
+    # CR opus: career_games_rate divides cumulative games by (cum_seasons * 162).
+    # CR opus: But 2020's 60-game season is excluded (EXCLUDED_SEASONS), so a player
+    # CR opus: who played 2019 and 2021 has cum_seasons=2 and denominator=324 — correct
+    # CR opus: since the 2020 gap is dropped entirely. However, for players who were
+    # CR opus: injured in a 162-game year but healthy in 2020 (excluded), their career
+    # CR opus: rate only reflects their injury-shortened seasons, biasing downward.
     # --- Career games played rate ---
     # Cumulative games and seasons prior to current row, computed per player.
     # shift(1) gives prior-season value; we accumulate all prior values.
@@ -453,6 +482,7 @@ def _build_prior_features_batter(df):
     return df
 
 
+# CR opus: Same season-gap validation issue as _build_prior_features_batter above.
 def _build_prior_features_pitcher(df):
     """Build prior-season features for pitchers."""
     df = df.sort(["player_id", "season"])
@@ -506,6 +536,12 @@ def _build_prior_features_pitcher(df):
             )
     df = df.with_columns(trend_exprs)
 
+    # CR opus: MAX_GAMES_PITCHER = 162 (appearances). But pitchers, especially starters,
+    # CR opus: typically appear in 30-35 games, not 162. Dividing by 162 means career_games_rate
+    # CR opus: for a healthy SP who appears in 33 games/year = 33/162 = 0.20, which looks
+    # CR opus: like they miss 80% of games. This makes career_games_rate meaningless for
+    # CR opus: pitchers — it's conflating "appearances" with "games available." For RPs who
+    # CR opus: appear in 60-70 games, it's 0.40. The feature is uninterpretable.
     # --- Career games rate ---
     df = df.with_columns(
         pl.col("games_played").shift(1).over("player_id").alias("_prior_gp")
@@ -569,6 +605,10 @@ def _add_milb_features(df, seasons, player_type="batter"):
     df = df.join(milb_df, on=["player_id", "season"], how="left")
 
     # Fill nulls with 0.0 (no MiLB data = zero signal)
+    # CR opus: fill_null(0.0) on integer columns (like draft_round, draft_pick) will
+    # CR opus: fail or silently cast. Also, filling milb_highest_level with 0 is
+    # CR opus: semantically misleading — 0 means "below Rookie" rather than "unknown".
+    # CR opus: Consider using a sentinel value or an explicit has_milb_data flag.
     milb_cols = [c for c in df.columns if c.startswith("milb_") or c.startswith("draft_")]
     for col in milb_cols:
         df = df.with_columns(pl.col(col).fill_null(0.0))
@@ -612,6 +652,11 @@ def _add_roster_context(df, seasons):
     ]).unique(subset=["team", "season"])
 
     # Shift to prior season
+    # CR opus: This gives the CURRENT team's PRIOR-season offensive stats. But for
+    # CR opus: a player who changed teams, this represents the new team's prior
+    # CR opus: performance (which the player wasn't part of). The feature name
+    # CR opus: "new_team_*" is appropriate but could be confusing — it's really
+    # CR opus: "current_team_prior_year_*".
     team_ctx = team_ctx.with_columns(
         (pl.col("season") + 1).cast(pl.Int64).alias("season")
     )
@@ -659,6 +704,8 @@ def build_batter_features(seasons):
 
     Args:
         seasons: Iterable of season years (e.g., range(2009, 2026)).
+        # CR opus: Docstring example says 2026 but the Lahman DB only has data
+        # CR opus: through 2025. This will silently produce no data for 2026.
 
     Returns:
         Polars DataFrame with one row per batter-season, containing
@@ -794,6 +841,13 @@ def build_batter_projection_features(seasons):
     dummy = players_latest.with_columns(pl.lit(proj_year).alias("season"))
 
     # Null out current-season stats (targets we don't have yet)
+    # CR opus: id_cols is missing metadata columns that should be preserved:
+    # CR opus: age, years_exp, height, weight, bats_code, throws_code, park_factor.
+    # CR opus: These all get nulled out, causing the projection to lose key features.
+    # CR opus: Since _add_player_metadata is NOT re-run on the extended dataframe,
+    # CR opus: the age+1 and years_exp+1 bumps on lines 861-863 are no-ops (null + 1 = null).
+    # CR opus: This means EVERY batter projection has null age and years_exp features,
+    # CR opus: which is a significant signal loss for age curves and experience effects.
     id_cols = {"player_id", "season", "player_display_name", "position_group", "team"}
     stat_cols = [c for c in dummy.columns if c not in id_cols]
     dummy = dummy.with_columns(
@@ -808,6 +862,10 @@ def build_batter_projection_features(seasons):
     extended = pl.concat([season_df, dummy], how="diagonal")
     extended = _build_prior_features_batter(extended)
     extended = _add_milb_features(extended, list(seasons) + [proj_year], player_type="batter")
+    # CR opus: `seasons` doesn't include proj_year, so _add_roster_context won't have
+    # CR opus: team data for proj_year. The changed_team flag will always be 0 for
+    # CR opus: projection rows since the dummy rows copy the prior team. Free agents
+    # CR opus: who signed with new teams won't be captured.
     extended = _add_roster_context(extended, seasons)
     extended = _add_display_names(extended)
 
@@ -862,6 +920,10 @@ def build_pitcher_projection_features(seasons):
     dummy = players_latest.with_columns(pl.lit(proj_year).alias("season"))
 
     # Null out current-season stats
+    # CR opus: Same as batter projections — id_cols is missing metadata columns
+    # CR opus: (age, years_exp, height, weight, etc.) so they get nulled out.
+    # CR opus: Pitcher projections lose age/experience features entirely (null + 1 = null).
+    # CR opus: Fix: add metadata cols to id_cols, or re-run _add_player_metadata after concat.
     id_cols = {"player_id", "season", "player_display_name", "position_group", "team"}
     stat_cols = [c for c in dummy.columns if c not in id_cols]
     dummy = dummy.with_columns(
