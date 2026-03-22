@@ -8,11 +8,15 @@ This script fetches career college stats for all combine participants
 across recent years and caches them locally for the projection pipeline.
 """
 
+import logging
 import sys
 from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Enable logging so we see progress from college_features
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
 import nflreadpy as nfl
 from nfldata.college_features import fetch_all_college_stats, _load_cache
