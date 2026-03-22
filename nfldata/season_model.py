@@ -18,18 +18,21 @@ from modelcore.season_model import (
 NFL_MAX_GAMES = 17
 
 
-def walk_forward_eval(df, min_train_seasons=2):
+def walk_forward_eval(df, min_train_seasons=2, elite_weight=None):
     return _walk_forward_eval(df, get_season_feature_columns, NFL_MAX_GAMES,
-                              min_train_seasons=min_train_seasons)
+                              min_train_seasons=min_train_seasons,
+                              elite_weight=elite_weight)
 
 
-def walk_forward_with_residuals(df, min_train_seasons=2):
+def walk_forward_with_residuals(df, min_train_seasons=2, elite_weight=None):
     return _walk_forward_with_residuals(df, get_season_feature_columns, NFL_MAX_GAMES,
-                                        min_train_seasons=min_train_seasons)
+                                        min_train_seasons=min_train_seasons,
+                                        elite_weight=elite_weight)
 
 
-def train_final_model(df, quantiles=(0.1, 0.5, 0.9)):
-    return _train_final_model(df, get_season_feature_columns, quantiles=quantiles)
+def train_final_model(df, quantiles=(0.1, 0.5, 0.9), elite_weight=None):
+    return _train_final_model(df, get_season_feature_columns, quantiles=quantiles,
+                              elite_weight=elite_weight)
 
 
 def project_season(ppg_model, games_model, features_df, quantile_models=None,

@@ -460,7 +460,7 @@ def walk_forward_with_residuals(df, feature_cols_fn, max_games, min_train_season
 
 
 def train_final_model(df, feature_cols_fn, quantiles=(0.1, 0.5, 0.9),
-                      model_params=None):
+                      model_params=None, elite_weight=None):
     """Train on ALL available data for production predictions.
 
     Args:
@@ -468,6 +468,8 @@ def train_final_model(df, feature_cols_fn, quantiles=(0.1, 0.5, 0.9),
         feature_cols_fn: Callable(df) -> list[str] returning feature column names.
         quantiles: Tuple of quantiles for floor/ceiling models.
         model_params: Optional dict of XGBoost hyperparameters to override defaults.
+        elite_weight: If set (> 1.0), top-12 players per position (by target_ppg)
+            receive this weight in the loss function. Default None (uniform weights).
 
     Returns:
         Tuple of (ppg_model, games_model, feature_importance_df, quantile_models).
@@ -478,6 +480,10 @@ def train_final_model(df, feature_cols_fn, quantiles=(0.1, 0.5, 0.9),
     X = df.select(feature_cols).to_pandas()
     y_ppg = df["target_ppg"].to_pandas()
     y_games = df["target_games"].to_pandas()
+
+    sw = _compute_elite_weights(df, elite_weight)
+    if sw is not None:
+        print(f"  Elite weighting: {np.sum(sw > 1.0):.0f} elite samples (weight={elite_weight})")
 
     # CR opus: n_estimators=300 with no early stopping means the final model uses a
     # CR opus: fixed iteration count. During walk-forward, early stopping typically halts
@@ -499,10 +505,10 @@ def train_final_model(df, feature_cols_fn, quantiles=(0.1, 0.5, 0.9),
         _final_params.update(model_params)
 
     ppg_model = XGBRegressor(**_final_params)
-    ppg_model.fit(X, y_ppg)
+    ppg_model.fit(X, y_ppg, sample_weight=sw)
 
     games_model = XGBRegressor(**_final_params)
-    games_model.fit(X, y_games)
+    games_model.fit(X, y_games, sample_weight=sw)
 
     # Train quantile models for PPG floor/ceiling
     quantile_models = {}
@@ -516,7 +522,7 @@ def train_final_model(df, feature_cols_fn, quantiles=(0.1, 0.5, 0.9),
         print(f"  Training PPG {label} model (q={q})...")
         q_params = {**_final_params, "objective": "reg:quantileerror", "quantile_alpha": q}
         q_model = XGBRegressor(**q_params)
-        q_model.fit(X, y_ppg)
+        q_model.fit(X, y_ppg, sample_weight=sw)
         quantile_models[q] = q_model
 
     # Feature importance
