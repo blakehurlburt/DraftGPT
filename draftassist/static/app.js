@@ -16,6 +16,8 @@
     const headerSlot = $("#header-slot");
     const headerTeams = $("#header-teams");
     const headerConnectBtn = $("#header-connect-btn");
+    const headerManualSlot = $("#header-manual-slot");
+    const headerManualSlotBtn = $("#header-manual-slot-btn");
     const statusBar = $("#status-bar");
     const mainContent = $("#main-content");
     const turnIndicator = $("#turn-indicator");
@@ -985,6 +987,7 @@
             const teamsText = data ? `${data.num_teams} teams, ${data.rounds} rounds, slot ${slot}` : "";
             $("#header-manual-label").textContent = `Manual ${sportLabel} Draft`;
             $("#header-teams-manual").textContent = teamsText;
+            headerManualSlot.value = slot;
             manualPickControls.classList.remove("hidden");
         } else {
             sleeperInfo.classList.remove("hidden");
@@ -1015,13 +1018,47 @@
     // persist and render stale player data until the first draft_update SSE event arrives.
     // Also, the old SSE connection is closed but the UI is not reset (stale roster, ticker,
     // board from the previous draft remain visible during the new connection attempt).
-    headerConnectBtn.addEventListener("click", () => {
+    headerConnectBtn.addEventListener("click", async () => {
         const draftId = parseDraftId(headerDraftId.value);
         const slot = parseInt(headerSlot.value, 10);
         if (!draftId || !slot || slot < 1) return;
+
+        // Slot-only change: same draft, different slot, existing session
+        if (sessionId && draftId === connectedDraftId && slot !== connectedSlot) {
+            try {
+                const resp = await fetch(apiUrl(`/api/slot?user_slot=${slot}`), { method: "POST" });
+                if (resp.ok) {
+                    connectedSlot = slot;
+                    showConnectedUI(draftId, slot, null);
+                    return;
+                }
+            } catch (err) {
+                console.error("Slot change failed, full reconnect:", err);
+            }
+        }
+
         if (eventSource) eventSource.close();
         sessionId = null;
         connectToDraft(draftId, slot, null);
+    });
+
+    // Manual mode slot change
+    headerManualSlotBtn.addEventListener("click", async () => {
+        const slot = parseInt(headerManualSlot.value, 10);
+        if (!slot || slot < 1 || !sessionId) return;
+        if (slot === connectedSlot) return;
+        try {
+            const resp = await fetch(apiUrl(`/api/slot?user_slot=${slot}`), { method: "POST" });
+            if (resp.ok) {
+                connectedSlot = slot;
+                // Update URL
+                const url = new URL(window.location);
+                url.searchParams.set("slot", slot);
+                window.history.replaceState({}, "", url);
+            }
+        } catch (err) {
+            console.error("Manual slot change failed:", err);
+        }
     });
 
     function startSSE() {

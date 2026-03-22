@@ -698,6 +698,45 @@ async def set_risk_profile(
     return JSONResponse({"status": "ok", "profile": profile})
 
 
+@app.post("/api/slot")
+async def change_slot(
+    session_id: str = Query(..., description="Session ID"),
+    user_slot: int = Query(..., description="New 1-indexed draft slot"),
+):
+    """Change the user's draft slot mid-draft."""
+    sess = _get_session(session_id)
+    if not sess.connected:
+        return JSONResponse({"error": "Not connected to a draft"}, status_code=400)
+
+    # Determine num_teams from whichever mode we're in
+    if sess.mode == "manual":
+        num_teams = sess.config.num_teams
+    else:
+        num_teams = config_from_sleeper_meta(sess.meta).num_teams
+
+    if user_slot < 1 or user_slot > num_teams:
+        return JSONResponse(
+            {"error": f"Slot must be between 1 and {num_teams}"},
+            status_code=400,
+        )
+
+    slot_0 = user_slot - 1
+    sess.user_slot = slot_0
+
+    # Rebuild payload with new slot perspective
+    if sess.mode == "manual":
+        _refresh_manual_state(sess)
+    else:
+        async with httpx.AsyncClient(timeout=10) as client:
+            picks = await fetch_draft_picks(client, sess.draft_id)
+        _refresh_state(sess, picks)
+
+    _push_to_subscribers(sess, sess.state_payload)
+
+    log.info("Session %s changed slot to %d", session_id, user_slot)
+    return JSONResponse({"status": "ok", "user_slot": user_slot})
+
+
 @app.post("/api/projections")
 async def set_projection_source(
     session_id: str = Query(..., description="Session ID"),
