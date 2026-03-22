@@ -12,6 +12,7 @@ from modelcore.season_model import (
     walk_forward_with_residuals as _walk_forward_with_residuals,
     train_final_model as _train_final_model,
     project_season as _project_season,
+    calibrate_predictions,
 )
 
 NFL_MAX_GAMES = 17
@@ -31,7 +32,9 @@ def train_final_model(df, quantiles=(0.1, 0.5, 0.9)):
     return _train_final_model(df, get_season_feature_columns, quantiles=quantiles)
 
 
-def project_season(ppg_model, games_model, features_df, quantile_models=None):
+def project_season(ppg_model, games_model, features_df, quantile_models=None,
+                   calibration_fn=None):
     return _project_season(ppg_model, games_model, features_df,
                            get_season_feature_columns, NFL_MAX_GAMES,
-                           quantile_models=quantile_models)
+                           quantile_models=quantile_models,
+                           calibration_fn=calibration_fn)

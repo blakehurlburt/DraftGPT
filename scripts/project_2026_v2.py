@@ -10,7 +10,7 @@ import polars as pl
 import numpy as np
 from pathlib import Path
 from nfldata.season_features import build_season_features, get_season_feature_columns
-from nfldata.season_model import train_final_model, project_season
+from nfldata.season_model import train_final_model, project_season, calibrate_predictions
 from nfldata.kicker_features import build_kicker_features, build_kicker_projection_features
 from nfldata.kicker_model import (
     train_final_model as train_kicker_model,
@@ -75,14 +75,20 @@ def main():
     # Step 3: Run walk-forward eval on training data
     print("\n--- Walk-Forward Evaluation (for reference) ---")
     from nfldata.season_model import walk_forward_eval
-    walk_forward_eval(df)
+    wf_results = walk_forward_eval(df)
+
+    # Step 3b: Build quantile-mapped calibration from walk-forward results
+    print("\n--- Building Calibration from Walk-Forward Results ---")
+    calibration_fn = calibrate_predictions(wf_results)
 
     # Step 4: Train final model on all available training data
     print("\n--- Training Final Model ---")
     ppg_model, games_model, importance, quantile_models = train_final_model(df)
 
-    # Step 6: Project (with floor/median/ceiling)
-    results = project_season(ppg_model, games_model, proj_df, quantile_models=quantile_models)
+    # Step 6: Project (with floor/median/ceiling + calibration)
+    results = project_season(ppg_model, games_model, proj_df,
+                             quantile_models=quantile_models,
+                             calibration_fn=calibration_fn)
 
     # Join with rosters
     results = results.join(rosters, on="player_id", how="left")

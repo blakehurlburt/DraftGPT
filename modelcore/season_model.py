@@ -15,14 +15,104 @@ from xgboost import XGBRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 
+def calibrate_predictions(wf_results_df):
+    """Build position-specific quantile-mapping calibration from walk-forward results.
+
+    For each position, computes the empirical CDF of predicted PPGs and actual
+    PPGs from walk-forward evaluation, then returns a function that maps new
+    predictions through np.interp to stretch compressed distributions back
+    toward historical reality.
+
+    Args:
+        wf_results_df: Polars DataFrame from walk_forward_eval() containing
+            at minimum: position_group, pred_ppg, actual_ppg.
+
+    Returns:
+        A callable calibration_fn(pred_ppg_array, positions_array) -> calibrated array.
+        Also works as calibration_fn(pred_ppg_array, positions_array) where both are
+        numpy arrays of the same length.
+    """
+    calibration_maps = {}
+
+    positions = wf_results_df["position_group"].unique().to_list()
+    for pos in positions:
+        pos_df = wf_results_df.filter(pl.col("position_group") == pos)
+        pred = np.sort(pos_df["pred_ppg"].to_numpy())
+        actual = np.sort(pos_df["actual_ppg"].to_numpy())
+
+        if len(pred) < 10:
+            # Not enough data to calibrate — skip this position
+            continue
+
+        # Both arrays are sorted ascending. pred[i] maps to actual[i] by quantile.
+        # np.interp(new_pred, pred, actual) gives the calibrated value.
+        calibration_maps[pos] = (pred, actual)
+
+    print(f"\n  Calibration maps built for: {sorted(calibration_maps.keys())}")
+    for pos, (pred, actual) in sorted(calibration_maps.items()):
+        print(f"    {pos}: {len(pred)} samples, "
+              f"pred range [{pred[0]:.1f}, {pred[-1]:.1f}], "
+              f"actual range [{actual[0]:.1f}, {actual[-1]:.1f}]")
+
+    def calibration_fn(pred_ppg, positions):
+        """Apply quantile-mapped calibration to predicted PPG values.
+
+        Args:
+            pred_ppg: numpy array of predicted PPG values.
+            positions: numpy array or list of position strings (same length).
+
+        Returns:
+            numpy array of calibrated PPG values.
+        """
+        calibrated = pred_ppg.copy()
+        for pos, (sorted_pred, sorted_actual) in calibration_maps.items():
+            mask = np.array([p == pos for p in positions])
+            if mask.any():
+                calibrated[mask] = np.interp(pred_ppg[mask], sorted_pred, sorted_actual)
+        return calibrated
+
+    return calibration_fn
+
+
+def _compute_elite_weights(df_slice, elite_weight, top_n=12):
+    """Compute sample weights: top-N players per position get elite_weight, others 1.0.
+
+    Uses ``target_ppg`` within each ``position_group`` to identify elite players.
+    Falls back to uniform weights (None) when the required columns are absent.
+
+    Args:
+        df_slice: Polars DataFrame containing at least ``position_group`` and ``target_ppg``.
+        elite_weight: Weight assigned to elite players (non-elite always get 1.0).
+        top_n: Number of elite players per position group.
+
+    Returns:
+        numpy array of sample weights, or None if weighting cannot be applied.
+    """
+    if elite_weight is None or elite_weight <= 1.0:
+        return None
+    if "position_group" not in df_slice.columns or "target_ppg" not in df_slice.columns:
+        return None
+
+    ranked = df_slice.with_columns(
+        pl.col("target_ppg")
+        .rank(method="ordinal", descending=True)
+        .over("position_group")
+        .alias("_elite_rank")
+    )
+    is_elite = ranked["_elite_rank"].to_numpy() <= top_n
+    weights = np.where(is_elite, elite_weight, 1.0)
+    return weights
+
+
 def train_xgb(X_train, y_train, X_val, y_val, label="", quantile=None,
-              model_params=None):
+              model_params=None, sample_weight=None):
     """Train a single XGBRegressor with early stopping.
 
     Args:
         quantile: If set (0-1), trains a quantile regression model instead
                   of mean regression. E.g., 0.1 for floor, 0.9 for ceiling.
         model_params: Optional dict of XGBoost hyperparameters to override defaults.
+        sample_weight: Optional array of per-sample weights for the training set.
     """
     kwargs = dict(
         n_estimators=500,
@@ -47,6 +137,7 @@ def train_xgb(X_train, y_train, X_val, y_val, label="", quantile=None,
         X_train, y_train,
         eval_set=[(X_val, y_val)],
         verbose=False,
+        sample_weight=sample_weight,
     )
     return model
 
@@ -60,7 +151,7 @@ def eval_metrics(y_true, y_pred):
 
 
 def walk_forward_eval(df, feature_cols_fn, max_games, min_train_seasons=2,
-                      model_params=None):
+                      model_params=None, elite_weight=None):
     """Run walk-forward evaluation across multiple test seasons.
 
     For each test season X, trains on all seasons < X and evaluates on X.
@@ -71,6 +162,8 @@ def walk_forward_eval(df, feature_cols_fn, max_games, min_train_seasons=2,
         max_games: Upper bound for game count predictions (17 for NFL, 162 for MLB).
         min_train_seasons: Minimum number of training seasons required.
         model_params: Optional dict of XGBoost hyperparameters to override defaults.
+        elite_weight: If set (> 1.0), top-12 players per position (by target_ppg)
+            receive this weight in the loss function. Default None (uniform weights).
 
     Returns:
         Polars DataFrame with all predictions and actuals.
@@ -117,14 +210,17 @@ def walk_forward_eval(df, feature_cols_fn, max_games, min_train_seasons=2,
         y_val_games = val_df["target_games"].to_pandas()
         y_test_games = test_df["target_games"].to_pandas()
 
+        # Compute elite sample weights for the training-proper split
+        sw = _compute_elite_weights(train_proper, elite_weight)
+
         # Train PPG model (early stopping on held-out validation season)
         ppg_model = train_xgb(X_train, y_train_ppg, X_val, y_val_ppg, "PPG",
-                              model_params=model_params)
+                              model_params=model_params, sample_weight=sw)
         pred_ppg = ppg_model.predict(X_test)
 
         # Train games model
         games_model = train_xgb(X_train, y_train_games, X_val, y_val_games, "Games",
-                                model_params=model_params)
+                                model_params=model_params, sample_weight=sw)
         pred_games = np.clip(games_model.predict(X_test), 0, max_games)
 
         # Compute predicted total
@@ -177,7 +273,8 @@ def walk_forward_eval(df, feature_cols_fn, max_games, min_train_seasons=2,
     return results_df
 
 
-def walk_forward_with_residuals(df, feature_cols_fn, max_games, min_train_seasons=2):
+def walk_forward_with_residuals(df, feature_cols_fn, max_games, min_train_seasons=2,
+                                elite_weight=None):
     """Two-stage walk-forward: stage 1 generates residuals, stage 2 uses them.
 
     Stage 1: Normal walk-forward to compute per-player prediction errors.
@@ -193,6 +290,8 @@ def walk_forward_with_residuals(df, feature_cols_fn, max_games, min_train_season
         feature_cols_fn: Callable(df) -> list[str] returning feature column names.
         max_games: Upper bound for game count predictions.
         min_train_seasons: Minimum training seasons required.
+        elite_weight: If set (> 1.0), top-12 players per position (by target_ppg)
+            receive this weight in the loss function. Default None (uniform weights).
 
     Returns:
         Tuple of (stage2_results_df, residual_lookup) where residual_lookup
@@ -221,10 +320,14 @@ def walk_forward_with_residuals(df, feature_cols_fn, max_games, min_train_season
         X_val = s1_val_df.select(feature_cols).to_pandas()
         X_test = test_df.select(feature_cols).to_pandas()
 
+        s1_sw = _compute_elite_weights(s1_train_proper, elite_weight)
+
         ppg_model = train_xgb(X_train, s1_train_proper["target_ppg"].to_pandas(),
-                              X_val, s1_val_df["target_ppg"].to_pandas())
+                              X_val, s1_val_df["target_ppg"].to_pandas(),
+                              sample_weight=s1_sw)
         games_model = train_xgb(X_train, s1_train_proper["target_games"].to_pandas(),
-                                X_val, s1_val_df["target_games"].to_pandas())
+                                X_val, s1_val_df["target_games"].to_pandas(),
+                                sample_weight=s1_sw)
 
         pred_ppg = ppg_model.predict(X_test)
         pred_games = np.clip(games_model.predict(X_test), 0, max_games)
@@ -294,10 +397,14 @@ def walk_forward_with_residuals(df, feature_cols_fn, max_games, min_train_season
         y_val_games = s2_val_df["target_games"].to_pandas()
         y_test_games = test_df["target_games"].to_pandas()
 
-        ppg_model = train_xgb(X_train, y_train_ppg, X_val, y_val_ppg)
+        s2_sw = _compute_elite_weights(s2_train_proper, elite_weight)
+
+        ppg_model = train_xgb(X_train, y_train_ppg, X_val, y_val_ppg,
+                              sample_weight=s2_sw)
         pred_ppg = ppg_model.predict(X_test)
 
-        games_model = train_xgb(X_train, y_train_games, X_val, y_val_games)
+        games_model = train_xgb(X_train, y_train_games, X_val, y_val_games,
+                                sample_weight=s2_sw)
         pred_games = np.clip(games_model.predict(X_test), 0, max_games)
 
         pred_total = pred_ppg * pred_games
@@ -427,7 +534,7 @@ def train_final_model(df, feature_cols_fn, quantiles=(0.1, 0.5, 0.9),
 
 
 def project_season(ppg_model, games_model, features_df, feature_cols_fn,
-                   max_games, quantile_models=None):
+                   max_games, quantile_models=None, calibration_fn=None):
     """Project next season's PPG, games, and total for each player.
 
     Args:
@@ -437,6 +544,8 @@ def project_season(ppg_model, games_model, features_df, feature_cols_fn,
         feature_cols_fn: Callable(df) -> list[str] returning feature column names.
         max_games: Upper bound for game count predictions.
         quantile_models: Optional dict of {quantile: model} for floor/median/ceiling.
+        calibration_fn: Optional callable from calibrate_predictions() that applies
+            quantile-mapped calibration to stretch compressed distributions.
 
     Returns:
         Polars DataFrame with player info and projections, ranked by position.
@@ -447,6 +556,12 @@ def project_season(ppg_model, games_model, features_df, feature_cols_fn,
 
     pred_ppg = ppg_model.predict(X)
     pred_games = np.clip(games_model.predict(X), 0, max_games)
+
+    # Apply quantile-mapped calibration before manual adjustments
+    if calibration_fn is not None and "position_group" in features_df.columns:
+        positions = features_df["position_group"].to_list()
+        pred_ppg = calibration_fn(pred_ppg, positions)
+        print(f"  Applied quantile-mapped calibration to {len(pred_ppg)} predictions")
 
     # Apply manual PPG adjustments if present
     adj = np.zeros(len(pred_ppg))
@@ -473,7 +588,11 @@ def project_season(ppg_model, games_model, features_df, feature_cols_fn,
     # Add quantile projections (floor/median/ceiling)
     if quantile_models:
         for q, q_model in sorted(quantile_models.items()):
-            q_pred = q_model.predict(X) + adj
+            q_pred = q_model.predict(X)
+            if calibration_fn is not None and "position_group" in features_df.columns:
+                positions = features_df["position_group"].to_list()
+                q_pred = calibration_fn(q_pred, positions)
+            q_pred = q_pred + adj
             q_total = q_pred * pred_games
             # CR opus: These labels only match the exact values 0.1, 0.5, 0.9. If
             # CR opus: train_final_model is called with different quantiles (e.g., 0.25, 0.75),
