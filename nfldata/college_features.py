@@ -33,6 +33,10 @@ CFBD_BASE = "https://api.collegefootballdata.com"
 # Position groups we care about
 _SKILL_POSITIONS = {"QB", "RB", "WR", "TE", "HB", "FB", "ATH"}
 
+# Rate limiting: minimum seconds between CFBD API requests
+_MIN_REQUEST_INTERVAL = 2.5  # CFBD free tier; pad generously to avoid 429s
+_last_request_time = 0.0
+
 
 def _get_api_key() -> Optional[str]:
     """Get CFBD API key from environment."""
@@ -62,10 +66,16 @@ def _fetch_player_stats(
     year: int,
     category: str,
     api_key: str,
-    max_retries: int = 3,
+    max_retries: int = 5,
 ) -> list[dict]:
     """Fetch a single player's season stats from CFBD API."""
+    global _last_request_time
     for attempt in range(max_retries + 1):
+        # Enforce minimum interval between requests to avoid rate limiting
+        elapsed = time.time() - _last_request_time
+        if elapsed < _MIN_REQUEST_INTERVAL:
+            time.sleep(_MIN_REQUEST_INTERVAL - elapsed)
+        _last_request_time = time.time()
         resp = requests.get(
             f"{CFBD_BASE}/stats/player/season",
             params={
@@ -81,7 +91,7 @@ def _fetch_player_stats(
         )
         if resp.status_code == 429:
             if attempt < max_retries:
-                wait = 2 ** (attempt + 1)
+                wait = 5 * (2 ** attempt)  # 5s, 10s, 20s, 40s, 80s
                 log.warning("CFBD rate limited (429), retrying in %ds (attempt %d/%d)", wait, attempt + 1, max_retries)
                 time.sleep(wait)
                 continue
@@ -198,7 +208,9 @@ def fetch_all_college_stats(
     current_year = max(p.get("seasons", [2024])[-1] for p in players if p.get("seasons"))
     years = list(range(current_year - 3, current_year + 1))
 
-    for school, school_players in schools.items():
+    total_schools = len(schools)
+    for idx, (school, school_players) in enumerate(schools.items(), 1):
+        log.info("Fetching %s (%d/%d)...", school, idx, total_schools)
         try:
             team_stats = fetch_college_stats_for_team(school, years, api_key)
             # Match fetched stats to our player list
