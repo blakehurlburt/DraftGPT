@@ -647,26 +647,35 @@
     $$(".proj-tab").forEach((tab) => {
         tab.addEventListener("click", async () => {
             if (tab.disabled) return;
+            const prevProj = currentProj;
             $$(".proj-tab").forEach((t) => t.classList.remove("active"));
             tab.classList.add("active");
             currentProj = tab.dataset.proj;
 
-            // CR opus: The POST to /api/projections is not checked for resp.ok — if the server
-            // returns an error (e.g., projection source unavailable), the code proceeds to
-            // fetch /api/state and renders with the old projection source, but the tab UI
-            // already shows the new source as active. This desync leaves the user thinking
-            // they switched projections when they didn't. Same pattern in the ADP tab handler.
+            // Show loading overlay
+            const recSection = document.getElementById("recommendations");
+            const overlay = document.createElement("div");
+            overlay.className = "rec-loading-overlay";
+            overlay.innerHTML = '<div class="spinner"></div><span>Recomputing…</span>';
+            recSection.appendChild(overlay);
+
             try {
-                await fetch(
+                const resp = await fetch(
                     apiUrl("/api/projections", { source: currentProj }),
                     { method: "POST" }
                 );
+                if (!resp.ok) throw new Error("Projection switch failed");
                 const stateResp = await fetch(apiUrl("/api/state"));
                 const state = await stateResp.json();
                 resetExtraRecs();
                 updateUI(state);
             } catch (err) {
                 console.error("Projection switch failed:", err);
+                // Revert tab on failure
+                currentProj = prevProj;
+                $$(".proj-tab").forEach((t) => t.classList.toggle("active", t.dataset.proj === prevProj));
+            } finally {
+                overlay.remove();
             }
         });
     });

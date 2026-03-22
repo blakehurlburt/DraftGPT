@@ -290,6 +290,40 @@ body {
     50% { opacity: 0.6; }
 }
 
+/* Loading overlay for projection/ADP recomputation */
+#recommendations { position: relative; }
+
+.rec-loading-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(15, 25, 35, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+    border-radius: 8px;
+}
+
+.rec-loading-overlay .spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid #2d3d4f;
+    border-top-color: #4fc3f7;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    margin-right: 10px;
+}
+
+.rec-loading-overlay span {
+    color: #8899aa;
+    font-size: 13px;
+    letter-spacing: 0.5px;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
 #draft-status-badge {
     margin-left: auto;
     font-size: 12px;
