@@ -330,18 +330,19 @@ def attach_fangraphs_projections(
     }
     _PITCHER_POSITIONS = {"SP", "RP"}
 
-    # CR opus: Name-only matching (no position) means a batter and pitcher with the
-    # same name (e.g., Shohei Ohtani) will collide — whichever appears last in the
-    # fg_projections list wins. This could assign pitcher stats to a batter or vice versa.
-    # Build lookup: normalized name -> FanGraphs entry
-    # For batters, also store primary position for matching
-    fg_lookup: dict[str, dict] = {}
+    # Build separate lookups for batters vs pitchers so dual-eligible
+    # players (e.g., Shohei Ohtani) don't collide.
+    fg_bat_lookup: dict[str, dict] = {}
+    fg_pit_lookup: dict[str, dict] = {}
     for entry in fg_projections:
         name = entry.get("PlayerName", "")
         if not name:
             continue
         key = _normalize(name)
-        fg_lookup[key] = entry
+        if entry.get("_fg_type") == "pit":
+            fg_pit_lookup[key] = entry
+        else:
+            fg_bat_lookup[key] = entry
 
     # Compute position-average floor/ceiling ratios from model data
     _pos_ratios: dict[str, tuple[float, float]] = {}
@@ -384,7 +385,10 @@ def attach_fangraphs_projections(
         p._model_total_ceiling = p.total_ceiling
 
         key = _normalize(p.name)
-        entry = fg_lookup.get(key)
+        if p.position in _PITCHER_POSITIONS:
+            entry = fg_pit_lookup.get(key)
+        else:
+            entry = fg_bat_lookup.get(key)
         if not entry:
             continue
 
