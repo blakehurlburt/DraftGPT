@@ -361,7 +361,18 @@ def attach_fangraphs_projections(
         else:
             _pos_ratios[pos] = (0.7, 1.3)
 
-    matched = 0
+    # Compute model pitcher/batter average ratio so we can scale FG pitcher
+    # points to keep pitchers and batters on a comparable fantasy-value scale.
+    # Without this, FG raw scoring makes batters ~1.5x higher than pitchers,
+    # causing pitchers to never appear in recommendations.
+    _model_pit_totals = [p.projected_total for p in players if p.position in _PITCHER_POSITIONS and p.projected_total > 0]
+    _model_bat_totals = [p.projected_total for p in players if p.position not in _PITCHER_POSITIONS and p.projected_total > 0]
+    model_pit_avg = _mean(_model_pit_totals) if _model_pit_totals else 1.0
+    model_bat_avg = _mean(_model_bat_totals) if _model_bat_totals else 1.0
+    model_ratio = model_pit_avg / model_bat_avg if model_bat_avg > 0 else 1.0
+
+    # First pass: compute raw FG points and save model backups
+    fg_raw: list[tuple[Player, float, float, str]] = []  # (player, pts, games, fg_type)
     for p in players:
         # Save model backup (always, even if no FanGraphs data)
         p._model_projected_total = p.projected_total
@@ -417,6 +428,21 @@ def attach_fangraphs_projections(
         if fg_type == "pit":
             games = float(entry.get("GS", 0) or entry.get("G", 0) or 0)
 
+        fg_raw.append((p, pts, games, fg_type))
+
+    # Compute FG pitcher/batter averages and derive scaling factor
+    fg_pit_pts = [pts for _, pts, _, ft in fg_raw if ft == "pit"]
+    fg_bat_pts = [pts for _, pts, _, ft in fg_raw if ft == "bat"]
+    fg_pit_avg = _mean(fg_pit_pts) if fg_pit_pts else 1.0
+    fg_bat_avg = _mean(fg_bat_pts) if fg_bat_pts else 1.0
+    fg_ratio = fg_pit_avg / fg_bat_avg if fg_bat_avg > 0 else 1.0
+    # Scale pitcher points so the pitcher/batter ratio matches the model
+    pitcher_scale = model_ratio / fg_ratio if fg_ratio > 0 else 1.0
+
+    matched = 0
+    for p, pts, games, fg_type in fg_raw:
+        if fg_type == "pit":
+            pts = pts * pitcher_scale
         p.fangraphs_projected_total = round(pts, 1)
         p.fangraphs_projected_games = games
         p.fangraphs_projected_ppg = round(pts / games, 2) if games > 0 else 0.0
