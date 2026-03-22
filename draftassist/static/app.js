@@ -480,6 +480,12 @@
             render: (r) => r.team,
         },
         {
+            key: "age", label: "Age", sortKey: "age",
+            title: "Player age",
+            cls: "sortable",
+            render: (r) => r.age || "—",
+        },
+        {
             key: "bye_week", label: "Bye", title: "Bye week",
             hidden: () => draftSport === "mlb",
             render: (r) => r.bye_week || "—",
@@ -565,6 +571,10 @@
         {
             key: "team", label: "Team", sortKey: "team",
             render: (p) => p.team,
+        },
+        {
+            key: "age", label: "Age", sortKey: "age",
+            render: (p) => p.age || "—",
         },
         {
             key: "bye_week", label: "Bye", sortKey: "bye_week",
@@ -1256,7 +1266,7 @@
                     rosterSort.asc = !rosterSort.asc;
                 } else {
                     // Default: strings ascending, numbers descending
-                    const numericKeys = new Set(["bye_week", "projected_total"]);
+                    const numericKeys = new Set(["age", "bye_week", "projected_total"]);
                     rosterSort = { key, asc: !numericKeys.has(key) };
                 }
                 if (currentState) renderRoster(currentState);

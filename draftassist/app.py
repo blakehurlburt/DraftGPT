@@ -243,6 +243,7 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
                     "vbd_score": round(r.vbd_score_value, 1),
                     "bye_week": r.player.bye_week,
                     "is_rookie": r.player.is_rookie,
+                    "age": r.player.age,
                     "adp": adp_rank.get(r.player.name, 999),
                 }
                 for r in rec_list
@@ -290,6 +291,7 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
             "projected_total": round(p.projected_total, 1),
             "bye_week": p.bye_week,
             "is_rookie": p.is_rookie,
+            "age": p.age,
             "vbd": round(vbd(p, replacement), 1),
         })
 
@@ -312,6 +314,7 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
                 "projected_games": round(p.projected_games, 1) if p.projected_games > 0 else None,
                 "bye_week": p.bye_week,
                 "is_rookie": True,
+                "age": p.age,
                 "adp": adp_rank.get(p.name, 999),
             })
 

@@ -30,6 +30,7 @@ class Player:
     total_ceiling: float = 0.0  # 90th percentile season total
     bye_week: int = 0
     is_rookie: bool = False
+    age: int | None = None
     sleeper_id: str = ""
     # Sleeper projection values (populated at connect time)
     sleeper_projected_total: float = 0.0
@@ -132,4 +133,49 @@ def load_players(
         except FileNotFoundError:
             pass  # ADP file missing — leave bye_week as 0
 
+    # Assign ages from Lahman People.csv (MLB only)
+    if sport == "mlb":
+        try:
+            _attach_mlb_ages(players)
+        except FileNotFoundError:
+            pass
+
     return players
+
+
+def _attach_mlb_ages(players: list[Player]) -> None:
+    """Attach age to MLB players from Lahman People.csv."""
+    from datetime import date
+
+    people_path = Path("data/lahman_1871-2025_csv/People.csv")
+    if not people_path.exists():
+        return
+
+    # Build name -> (birthYear, birthMonth, birthDay) lookup
+    name_to_birth: dict[str, tuple[int, int, int]] = {}
+    with open(people_path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            by, bm, bd = row.get("birthYear", ""), row.get("birthMonth", ""), row.get("birthDay", "")
+            if not by or not bm or not bd:
+                continue
+            try:
+                first = row.get("nameFirst", "")
+                last = row.get("nameLast", "")
+                full = f"{first} {last}".strip()
+                if full:
+                    name_to_birth[full.lower()] = (int(by), int(bm), int(bd))
+            except (ValueError, TypeError):
+                continue
+
+    today = date.today()
+    for p in players:
+        birth = name_to_birth.get(p.name.lower())
+        if birth:
+            by, bm, bd = birth
+            try:
+                bdate = date(by, bm, bd)
+                age = (today - bdate).days // 365
+                p.age = age
+            except ValueError:
+                continue

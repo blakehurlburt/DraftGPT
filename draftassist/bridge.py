@@ -85,6 +85,8 @@ def build_player_index(
             player.sleeper_id = sid
             if info.get("years_exp", 99) == 0:
                 player.is_rookie = True
+            if info.get("age") is not None:
+                player.age = int(info["age"])
             id_to_player[sid] = player
 
     return id_to_player
