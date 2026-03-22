@@ -393,19 +393,24 @@ class TestDefaultConfigForSport:
     def test_mlb_defaults(self):
         config = default_config_for_sport("mlb")
         assert config.num_teams == 12
+        assert config.roster_size == 24
         assert config.lineup["C"] == 1
-        assert config.lineup["SP"] == 2
-        assert config.lineup["RP"] == 2
+        assert config.lineup["SP"] == 1
+        assert config.lineup["RP"] == 1
         assert config.lineup["OF"] == 3
         assert "FLEX" in config.lineup  # UTIL slot
+        assert "PFLEX" in config.lineup  # P slot (pitcher flex)
         # UTIL should be eligible for all batters
         assert "C" in config.flex_positions()
         assert "OF" in config.flex_positions()
+        # PFLEX should be eligible for pitchers
+        assert "SP" in config.flex_positions()
+        assert "RP" in config.flex_positions()
 
-    def test_mlb_custom_size(self):
-        config = default_config_for_sport("mlb", num_teams=8, roster_size=22)
+    def test_mlb_custom_teams(self):
+        config = default_config_for_sport("mlb", num_teams=8)
         assert config.num_teams == 8
-        assert config.roster_size == 22
+        assert config.roster_size == 24
 
 
 # ---------------------------------------------------------------------------
@@ -467,10 +472,32 @@ class TestFlexEligible:
         config = LeagueConfig()
         assert config.flex_positions() == ["RB", "WR", "TE"]
 
-    def test_custom_flex(self):
+    def test_custom_flex_list(self):
         config = LeagueConfig(flex_eligible=["C", "1B", "2B", "3B", "SS", "OF", "DH"])
         assert "C" in config.flex_positions()
         assert "DH" in config.flex_positions()
+
+    def test_multi_flex_dict(self):
+        config = LeagueConfig(
+            lineup={"C": 1, "SP": 1, "RP": 1, "FLEX": 1, "PFLEX": 1},
+            flex_eligible={
+                "FLEX": ["C", "1B", "OF"],
+                "PFLEX": ["SP", "RP"],
+            },
+        )
+        # flex_positions returns union of all flex types
+        positions = config.flex_positions()
+        assert "C" in positions
+        assert "SP" in positions
+        assert "RP" in positions
+        # num_flex sums all flex slots
+        assert config.num_flex() == 2
+        # flex_slot_info returns per-type info
+        info = config.flex_slot_info()
+        assert len(info) == 2
+        pflex = [i for i in info if i[0] == "PFLEX"][0]
+        assert pflex[1] == 1
+        assert pflex[2] == ["SP", "RP"]
 
 
 # ---------------------------------------------------------------------------

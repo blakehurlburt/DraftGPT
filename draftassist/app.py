@@ -295,8 +295,12 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
             "vbd": round(vbd(p, replacement), 1),
         })
 
-    # Team needs
-    needs = state.team_needs(user_slot) if user_slot < config.num_teams else {}
+    # Team needs — map internal flex names to user-friendly labels
+    _NEEDS_DISPLAY = {"FLEX": "Util", "PFLEX": "P"}
+    needs = {
+        _NEEDS_DISPLAY.get(k, k): v
+        for k, v in (state.team_needs(user_slot) if user_slot < config.num_teams else {}).items()
+    }
 
     # Available rookies — surfaced separately so the UI can show them
     # when the Rookies filter is active, even if they don't rank in the

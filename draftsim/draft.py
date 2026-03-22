@@ -97,17 +97,16 @@ class DraftState:
             if remaining > 0:
                 needs[pos] = remaining
 
-        # FLEX: check if we have enough RB/WR/TE beyond starters
-        flex_needed = self.config.num_flex()
-        if flex_needed > 0:
+        # Flex slots: check if we have enough eligible players beyond starters
+        for slot_name, slot_count, eligible in self.config.flex_slot_info():
             flex_surplus = 0
-            for pos in self.config.flex_positions():
+            for pos in eligible:
                 have = sum(1 for p in roster if p.position == pos)
                 required = starter_slots.get(pos, 0)
                 flex_surplus += max(0, have - required)
-            flex_remaining = max(0, flex_needed - flex_surplus)
+            flex_remaining = max(0, slot_count - flex_surplus)
             if flex_remaining > 0:
-                needs["FLEX"] = flex_remaining
+                needs[slot_name] = flex_remaining
 
         return needs
 

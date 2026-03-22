@@ -216,19 +216,24 @@ def default_config_for_sport(
 ) -> LeagueConfig:
     """Build a LeagueConfig with sport-appropriate defaults."""
     if sport == "mlb":
+        # Yahoo points league: C/1B/2B/3B/SS/LF/CF/RF/Util/SP/RP/P + 12 BN
+        # LF/CF/RF map to OF in our data; P is a pitcher flex (SP or RP)
         lineup = {
             "C": 1, "1B": 1, "2B": 1, "3B": 1, "SS": 1,
-            "OF": 3, "FLEX": 1, "SP": 2, "RP": 2,
+            "OF": 3, "FLEX": 1, "SP": 1, "RP": 1, "PFLEX": 1,
         }
         position_caps = {
             "C": 3, "1B": 3, "2B": 3, "3B": 3, "SS": 3,
             "OF": 6, "SP": 6, "RP": 4, "DH": 2,
         }
-        # UTIL slot: all batters eligible
-        flex_eligible = ["C", "1B", "2B", "3B", "SS", "OF", "DH"]
+        # FLEX = Util (any batter), PFLEX = P slot (any pitcher)
+        flex_eligible = {
+            "FLEX": ["C", "1B", "2B", "3B", "SS", "OF", "DH"],
+            "PFLEX": ["SP", "RP"],
+        }
         return LeagueConfig(
             num_teams=num_teams,
-            roster_size=roster_size,
+            roster_size=24,
             lineup=lineup,
             position_caps=position_caps,
             flex_eligible=flex_eligible,

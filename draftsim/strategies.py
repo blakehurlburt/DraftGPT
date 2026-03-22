@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .config import LeagueConfig
+from .config import LeagueConfig, _FLEX_SLOTS
 from .draft import DraftState
 from .players import Player
 from .value import (
@@ -33,12 +33,8 @@ def _force_need_pick(state: DraftState, team_idx: int, eligible: list[Player]) -
     needs = state.team_needs(team_idx)
     remaining = state.picks_remaining(team_idx)
 
-    # Count mandatory needs (not FLEX since it's flexible)
-    # CR opus: K and DST are included in mandatory needs, so a team that hasn't drafted
-    # a K or DST yet will be forced to take them before best-available skill players in
-    # late rounds. This is arguably correct (must fill the roster), but it means the
-    # strategy can't intentionally punt K/DST to the very last picks.
-    mandatory = {k: v for k, v in needs.items() if k != "FLEX"}
+    # Count mandatory needs (not flex slots since they're flexible)
+    mandatory = {k: v for k, v in needs.items() if k not in _FLEX_SLOTS}
     mandatory_count = sum(mandatory.values())
 
     # CR opus: This uses >= which means if mandatory_count == remaining, we force

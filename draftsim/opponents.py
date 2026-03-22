@@ -76,10 +76,11 @@ class ADPOpponent:
 
         # Find highest-priority need (fewest filled starters)
         need_positions = set(needs.keys())
-        # FLEX need can be filled by RB/WR/TE
-        if "FLEX" in need_positions:
-            need_positions.discard("FLEX")
-            need_positions.update(state.config.flex_positions())
+        # Flex needs can be filled by their eligible positions
+        for slot_name, _count, eligible_pos in state.config.flex_slot_info():
+            if slot_name in need_positions:
+                need_positions.discard(slot_name)
+                need_positions.update(eligible_pos)
 
         need_players = [p for p in eligible if p.position in need_positions]
         if not need_players:

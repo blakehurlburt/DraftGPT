@@ -15,7 +15,6 @@ def compute_optimal_lineup(roster: list[Player], config: LeagueConfig) -> tuple[
         (lineup, total_points) — the optimal starters and their total projected points
     """
     starters = config.starter_slots()
-    flex_count = config.num_flex()
 
     # Group roster by position (derive from config + roster, not hardcoded)
     all_positions = set(starters.keys()) | set(config.flex_positions())
@@ -40,20 +39,18 @@ def compute_optimal_lineup(roster: list[Player], config: LeagueConfig) -> tuple[
             lineup.append(player)
             used.add(player.name)
 
-    # Fill FLEX with best remaining RB/WR/TE
-    # CR opus: The `used` set tracks by player name, but two different players could
-    # share the same name (unlikely but possible). Using player identity (id(p) or the
-    # Player object itself) would be safer.
-    flex_candidates = []
-    for pos in config.flex_positions():
-        start_idx = starters.get(pos, 0)
-        for p in by_pos.get(pos, [])[start_idx:]:
-            if p.name not in used:
-                flex_candidates.append(p)
-
-    flex_candidates.sort(key=lambda p: p.projected_total, reverse=True)
-    for i in range(min(flex_count, len(flex_candidates))):
-        lineup.append(flex_candidates[i])
+    # Fill each flex type with best remaining eligible players
+    for _slot_name, slot_count, eligible in config.flex_slot_info():
+        flex_candidates = []
+        for pos in eligible:
+            start_idx = starters.get(pos, 0)
+            for p in by_pos.get(pos, [])[start_idx:]:
+                if p.name not in used:
+                    flex_candidates.append(p)
+        flex_candidates.sort(key=lambda p: p.projected_total, reverse=True)
+        for i in range(min(slot_count, len(flex_candidates))):
+            lineup.append(flex_candidates[i])
+            used.add(flex_candidates[i].name)
 
     total = sum(p.projected_total for p in lineup)
     return lineup, total
