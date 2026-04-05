@@ -6,6 +6,7 @@ Trains on all available season-level data, uses 2025 stats as the
 Combines with rosters.csv for team assignments.
 """
 
+import json
 import polars as pl
 import numpy as np
 from pathlib import Path
@@ -25,6 +26,7 @@ from nfldata.dst_model import (
 )
 
 ROSTER_PATH = Path(__file__).parent.parent / "data" / "rosters.csv"
+ADJUSTMENTS_PATH = Path(__file__).parent.parent / "data" / "nfl_adjustments.json"
 OUTPUT_DIR = Path(__file__).parent.parent / "data" / "projections"
 
 
@@ -68,6 +70,39 @@ def main():
     # Split into training and projection sets
     df = full_df.filter(pl.col("season") < 2026)
     proj_df = full_df.filter(pl.col("season") == 2026)
+
+    # Load adjustments from nfl_adjustments.json (overrides rosters.csv adjustment_ppg)
+    if ADJUSTMENTS_PATH.exists():
+        with open(ADJUSTMENTS_PATH) as f:
+            adj_json = json.load(f)
+        if adj_json:
+            print(f"\nLoading {len(adj_json)} adjustment(s) from nfl_adjustments.json...")
+            adj_names = list(adj_json.keys())
+            adj_ppg_vals = [adj_json[n].get("adjustment_ppg", 0) or 0 for n in adj_names]
+            adj_games_vals = [adj_json[n].get("adjustment_games", 0) or 0 for n in adj_names]
+            adj_vol_vals = [adj_json[n].get("adjustment_volatility", 0) or 0 for n in adj_names]
+
+            adj_lookup = pl.DataFrame({
+                "player_display_name": adj_names,
+                "_json_adjustment_ppg": adj_ppg_vals,
+                "adjustment_games": adj_games_vals,
+                "adjustment_volatility": adj_vol_vals,
+            })
+
+            proj_df = proj_df.join(adj_lookup, on="player_display_name", how="left")
+
+            # JSON adjustment_ppg overrides rosters.csv adjustment_ppg when present
+            if "adjustment_ppg" in proj_df.columns:
+                proj_df = proj_df.with_columns(
+                    pl.when(pl.col("_json_adjustment_ppg").is_not_null())
+                    .then(pl.col("_json_adjustment_ppg"))
+                    .otherwise(pl.col("adjustment_ppg"))
+                    .alias("adjustment_ppg")
+                ).drop("_json_adjustment_ppg")
+            else:
+                proj_df = proj_df.with_columns(
+                    pl.col("_json_adjustment_ppg").fill_null(0.0).alias("adjustment_ppg")
+                ).drop("_json_adjustment_ppg")
 
     # CR opus: Walk-forward eval runs here for diagnostic output only, but it trains
     # CR opus: models that are immediately discarded. This doubles training time for no

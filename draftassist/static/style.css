@@ -1184,3 +1184,248 @@ td.sim-value {
     main { flex-direction: column; }
     .left-panel, .right-panel { flex: 1; }
 }
+
+/* ── Projection Adjustments Page ────────────────────────────── */
+
+#adj-header {
+    background: #1a2733;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #2d3d4f;
+}
+
+.adj-header-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.adj-header-left h1 {
+    font-size: 18px;
+    color: #4fc3f7;
+    font-weight: 600;
+}
+
+.adj-nav-link {
+    font-size: 12px;
+    color: #6b7c8d;
+    text-decoration: none;
+}
+
+.adj-nav-link:hover {
+    color: #4fc3f7;
+    text-decoration: underline;
+}
+
+.adj-header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.adj-dirty {
+    color: #ff9800;
+    font-size: 12px;
+    font-weight: 600;
+    animation: pulse 1.2s ease-in-out infinite;
+}
+
+.adj-count {
+    font-size: 12px;
+    color: #6b7c8d;
+}
+
+.adj-btn {
+    border: none;
+    padding: 6px 16px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.adj-btn-primary {
+    background: #4fc3f7;
+    color: #0f1923;
+}
+
+.adj-btn-primary:hover {
+    background: #81d4fa;
+}
+
+.adj-btn-primary:disabled {
+    background: #2d3d4f;
+    color: #6b7c8d;
+    cursor: default;
+}
+
+.adj-btn-pulse {
+    animation: pulse 1.2s ease-in-out infinite;
+}
+
+.adj-btn-secondary {
+    background: #2d3d4f;
+    color: #8899aa;
+}
+
+.adj-btn-secondary:hover {
+    background: #3d4d5f;
+    color: #e0e6ed;
+}
+
+#adj-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 24px;
+    background: #152029;
+    border-bottom: 1px solid #1e2d3d;
+    flex-wrap: wrap;
+}
+
+#adj-pos-filter {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.adj-search-wrapper {
+    flex: 0 0 200px;
+}
+
+#adj-search {
+    background: #0f1923;
+    border: 1px solid #2d3d4f;
+    color: #e0e6ed;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    width: 100%;
+}
+
+#adj-search:focus {
+    outline: none;
+    border-color: #4fc3f7;
+}
+
+.adj-changed-toggle {
+    font-size: 12px;
+    color: #6b7c8d;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    user-select: none;
+}
+
+.adj-changed-toggle input {
+    cursor: pointer;
+}
+
+#adj-main {
+    padding: 16px;
+    max-width: 1600px;
+    margin: 0 auto;
+}
+
+#adj-table-section {
+    background: #1a2733;
+    border-radius: 8px;
+    padding: 16px;
+    border: 1px solid #2d3d4f;
+}
+
+/* Adjustment input cells */
+.adj-input {
+    background: #0f1923;
+    border: 1px solid #2d3d4f;
+    color: #e0e6ed;
+    padding: 4px 6px;
+    border-radius: 3px;
+    font-size: 13px;
+    width: 70px;
+    text-align: right;
+    font-family: inherit;
+}
+
+.adj-input:focus {
+    outline: none;
+    border-color: #4fc3f7;
+}
+
+.adj-input.adj-changed {
+    border-color: #ff9800;
+    background: rgba(255, 152, 0, 0.08);
+    color: #ffcc80;
+}
+
+.adj-note-input {
+    background: #0f1923;
+    border: 1px solid #2d3d4f;
+    color: #8899aa;
+    padding: 4px 6px;
+    border-radius: 3px;
+    font-size: 12px;
+    width: 120px;
+    font-family: inherit;
+}
+
+.adj-note-input:focus {
+    outline: none;
+    border-color: #4fc3f7;
+    color: #e0e6ed;
+}
+
+.adj-col-header {
+    color: #ff9800 !important;
+}
+
+.adj-row-changed {
+    background: rgba(255, 152, 0, 0.03);
+}
+
+.adj-row-changed:hover td {
+    background: rgba(255, 152, 0, 0.06) !important;
+}
+
+/* Preview delta colors */
+.delta-pos {
+    color: #66bb6a;
+    font-weight: 600;
+}
+
+.delta-neg {
+    color: #ff5252;
+    font-weight: 600;
+}
+
+.range-floor-text {
+    color: #66bb6a;
+}
+
+.range-ceil-text {
+    color: #ff7043;
+}
+
+/* Show more (adjustments page) */
+#adj-show-more {
+    display: block;
+    width: 100%;
+    background: #0f1923;
+    color: #4fc3f7;
+    border: 1px solid #2d3d4f;
+    padding: 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    margin-top: 8px;
+}
+
+#adj-show-more:hover {
+    background: #1e2d3d;
+    border-color: #4fc3f7;
+}
+
+#adj-show-more.hidden { display: none; }

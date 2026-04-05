@@ -1202,6 +1202,98 @@ async def search_players(
     return JSONResponse({"results": results})
 
 
+@app.get("/adjustments", response_class=HTMLResponse)
+async def adjustments_page():
+    """Serve the projection adjustments editor."""
+    html_path = STATIC_DIR / "adjustments.html"
+    return HTMLResponse(html_path.read_text())
+
+
+_NFL_ADJUSTMENTS_PATH = DATA_DIR / "nfl_adjustments.json"
+
+
+def _load_adjustments() -> dict:
+    """Load NFL adjustments from JSON file."""
+    if _NFL_ADJUSTMENTS_PATH.exists():
+        with open(_NFL_ADJUSTMENTS_PATH) as f:
+            return json.load(f)
+    return {}
+
+
+@app.get("/api/nfl-adjustments")
+async def get_nfl_adjustments():
+    """Load all NFL players with base projections and existing adjustments."""
+    import csv as csv_mod
+
+    proj_path = DATA_DIR / "projections" / "all_projections.csv"
+    if not proj_path.exists():
+        raise HTTPException(status_code=404, detail="Projections file not found")
+
+    players = []
+    with open(proj_path, newline="") as f:
+        reader = csv_mod.DictReader(f)
+        for row in reader:
+            pos = row.get("position_group", "")
+            if pos not in ("QB", "RB", "WR", "TE"):
+                continue
+            total = float(row.get("projected_total", 0))
+            if total < 20:
+                continue
+            players.append({
+                "name": row["player_display_name"],
+                "position": pos,
+                "team": row.get("current_team", ""),
+                "projected_ppg": round(float(row.get("projected_ppg", 0)), 1),
+                "ppg_median": round(float(row.get("ppg_median", 0)), 1),
+                "ppg_floor": round(float(row.get("ppg_floor", 0)), 1),
+                "ppg_ceiling": round(float(row.get("ppg_ceiling", 0)), 1),
+                "projected_games": round(float(row.get("projected_games", 0)), 1),
+                "projected_total": int(total),
+                "total_floor": int(float(row.get("total_floor", 0))),
+                "total_ceiling": int(float(row.get("total_ceiling", 0))),
+                "pos_rank": int(row.get("pos_rank", 0)),
+            })
+
+    adjustments = _load_adjustments()
+
+    return JSONResponse({"players": players, "adjustments": adjustments})
+
+
+@app.post("/api/nfl-adjustments")
+async def save_nfl_adjustments(request: Request):
+    """Save adjustments to disk."""
+    body = await request.json()
+    adjustments = body.get("adjustments", {})
+
+    # Strip all-zero entries
+    cleaned = {}
+    for name, adj in adjustments.items():
+        ppg = adj.get("adjustment_ppg", 0) or 0
+        games = adj.get("adjustment_games", 0) or 0
+        vol = adj.get("adjustment_volatility", 0) or 0
+        note = adj.get("note", "") or ""
+        if ppg or games or vol or note:
+            cleaned[name] = {
+                "adjustment_ppg": ppg,
+                "adjustment_games": games,
+                "adjustment_volatility": vol,
+                "note": note,
+            }
+
+    with open(_NFL_ADJUSTMENTS_PATH, "w") as f:
+        json.dump(cleaned, f, indent=2)
+
+    log.info("Saved %d NFL adjustment(s) to %s", len(cleaned), _NFL_ADJUSTMENTS_PATH)
+    return JSONResponse({"status": "ok", "count": len(cleaned)})
+
+
+@app.get("/trade", response_class=HTMLResponse)
+async def trade():
+    """Serve the trade calculator UI."""
+    html_path = STATIC_DIR / "trade.html"
+    return HTMLResponse(html_path.read_text())
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
     """Serve the main UI."""

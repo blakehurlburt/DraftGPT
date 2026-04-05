@@ -547,6 +547,11 @@ def project_season(ppg_model, games_model, features_df, feature_cols_fn,
         ppg_model: Fitted XGBRegressor for PPG (mean).
         games_model: Fitted XGBRegressor for games played.
         features_df: Polars DataFrame with feature columns for the projection season.
+            Recognised adjustment columns (all optional, default 0):
+            - adjustment_ppg: additive PPG shift
+            - adjustment_games: additive games shift (result clipped to [0, max_games])
+            - adjustment_volatility: multiplicative spread factor on floor/ceiling
+              distance from median (e.g. 0.15 = 15% wider range)
         feature_cols_fn: Callable(df) -> list[str] returning feature column names.
         max_games: Upper bound for game count predictions.
         quantile_models: Optional dict of {quantile: model} for floor/median/ceiling.
@@ -578,6 +583,23 @@ def project_season(ppg_model, games_model, features_df, feature_cols_fn,
             print(f"  Applying {nonzero} manual PPG adjustment(s)")
             pred_ppg = pred_ppg + adj
 
+    # Apply manual games adjustments if present
+    adj_games = np.zeros(len(pred_games))
+    if "adjustment_games" in features_df.columns:
+        adj_games = features_df["adjustment_games"].fill_null(0.0).to_numpy()
+        nonzero = np.count_nonzero(adj_games)
+        if nonzero > 0:
+            print(f"  Applying {nonzero} manual games adjustment(s)")
+            pred_games = np.clip(pred_games + adj_games, 0, max_games)
+
+    # Load volatility adjustment for use in quantile loop below
+    adj_vol = np.zeros(len(pred_ppg))
+    if "adjustment_volatility" in features_df.columns:
+        adj_vol = features_df["adjustment_volatility"].fill_null(0.0).to_numpy()
+        nonzero = np.count_nonzero(adj_vol)
+        if nonzero > 0:
+            print(f"  Applying {nonzero} manual volatility adjustment(s)")
+
     pred_total = pred_ppg * pred_games
 
     id_cols = ["player_id", "player_display_name", "position_group", "team"]
@@ -593,12 +615,26 @@ def project_season(ppg_model, games_model, features_df, feature_cols_fn,
 
     # Add quantile projections (floor/median/ceiling)
     if quantile_models:
+        # First pass: compute median for volatility scaling reference
+        median_pred = None
+        if 0.5 in quantile_models:
+            median_pred = quantile_models[0.5].predict(X)
+            if calibration_fn is not None and "position_group" in features_df.columns:
+                positions = features_df["position_group"].to_list()
+                median_pred = calibration_fn(median_pred, positions)
+            median_pred = median_pred + adj  # shift by PPG adjustment
+
         for q, q_model in sorted(quantile_models.items()):
             q_pred = q_model.predict(X)
             if calibration_fn is not None and "position_group" in features_df.columns:
                 positions = features_df["position_group"].to_list()
                 q_pred = calibration_fn(q_pred, positions)
             q_pred = q_pred + adj
+
+            # Apply volatility adjustment to floor/ceiling (scale distance from median)
+            if median_pred is not None and q != 0.5 and np.any(adj_vol != 0):
+                q_pred = median_pred + (q_pred - median_pred) * (1 + adj_vol)
+
             q_total = q_pred * pred_games
             # CR opus: These labels only match the exact values 0.1, 0.5, 0.9. If
             # CR opus: train_final_model is called with different quantiles (e.g., 0.25, 0.75),

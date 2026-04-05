@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Projection Adjustments</title>
+    <link rel="stylesheet" href="/static/style.css?v=5">
+</head>
+<body>
+    <header id="adj-header">
+        <div class="adj-header-left">
+            <h1>Projection Adjustments</h1>
+            <a href="/" class="adj-nav-link">Draft Assistant</a>
+        </div>
+        <div class="adj-header-right">
+            <span id="adj-dirty" class="adj-dirty hidden">Unsaved changes</span>
+            <span id="adj-count" class="adj-count"></span>
+            <button id="reset-btn" class="adj-btn adj-btn-secondary">Reset All</button>
+            <button id="save-btn" class="adj-btn adj-btn-primary">Save</button>
+        </div>
+    </header>
+
+    <div id="adj-filter-bar">
+        <div id="adj-pos-filter">
+            <span class="pos-filter-label">Pos:</span>
+        </div>
+        <div class="adj-search-wrapper">
+            <input type="text" id="adj-search" placeholder="Search player...">
+        </div>
+        <label class="adj-changed-toggle">
+            <input type="checkbox" id="adj-changed-only"> Changed only
+        </label>
+    </div>
+
+    <main id="adj-main">
+        <section id="adj-table-section">
+            <table id="adj-table">
+                <thead id="adj-head"></thead>
+                <tbody id="adj-body"></tbody>
+            </table>
+            <button id="adj-show-more" class="hidden">Show more</button>
+        </section>
+    </main>
+
+    <script src="/static/adjustments.js?v=1"></script>
+</body>
+</html>
