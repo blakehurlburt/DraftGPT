@@ -36,7 +36,18 @@ from .bridge import (
 from .fangraphs import fetch_fangraphs_projections
 from .recommender import get_recommendations
 from .scoring import extract_scoring_from_meta
-from .sleeper import fetch_all_players, fetch_draft_meta, fetch_draft_picks, fetch_projections
+from .sleeper import (
+    fetch_all_players, fetch_draft_meta, fetch_draft_picks, fetch_projections,
+    fetch_league_info, fetch_league_rosters, fetch_league_users,
+)
+from .trade import (
+    TradeSession, TradeTeam, evaluate_trade, resolve_sleeper_rosters,
+    roster_needs, best_at_position, player_trade_value,
+)
+from .yahoo import (
+    fetch_yahoo_league_info, fetch_yahoo_rosters,
+    yahoo_config_from_positions, resolve_yahoo_rosters,
+)
 
 log = logging.getLogger("draftassist")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
@@ -87,6 +98,7 @@ class DraftSession:
 # attach_sleeper_projections on one session's players affect ALL sessions that
 # loaded the same player pool. Each session should own its own deep copy.
 sessions: dict[str, DraftSession] = {}
+trade_sessions: dict[str, TradeSession] = {}
 _cleanup_task: asyncio.Task | None = None
 
 
@@ -1285,6 +1297,328 @@ async def save_nfl_adjustments(request: Request):
 
     log.info("Saved %d NFL adjustment(s) to %s", len(cleaned), _NFL_ADJUSTMENTS_PATH)
     return JSONResponse({"status": "ok", "count": len(cleaned)})
+
+
+# ---------------------------------------------------------------------------
+# Trade Calculator API
+# ---------------------------------------------------------------------------
+
+def _get_trade_session(session_id: str) -> TradeSession:
+    """Look up a trade session by ID or raise 404."""
+    sess = trade_sessions.get(session_id)
+    if sess is None:
+        raise HTTPException(status_code=404, detail="Trade session not found")
+    return sess
+
+
+@app.post("/api/trade/connect-sleeper")
+async def trade_connect_sleeper(request: Request):
+    """Connect to a Sleeper league and load rosters for trade analysis."""
+    body = await request.json()
+    league_id = str(body.get("league_id", "")).strip()
+    sport = body.get("sport", "nfl")
+
+    if not league_id:
+        raise HTTPException(status_code=400, detail="league_id is required")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        # Fetch league info, rosters, users, and player DB in parallel
+        league_info, raw_rosters, users, all_sleeper = await asyncio.gather(
+            fetch_league_info(client, league_id),
+            fetch_league_rosters(client, league_id),
+            fetch_league_users(client, league_id),
+            fetch_all_players(client),
+        )
+
+    # Build league config from league settings
+    settings = league_info.get("settings", {})
+    roster_positions = settings.get("roster_positions", [])
+    num_teams = settings.get("num_teams", len(raw_rosters))
+
+    if roster_positions:
+        # Build config from league info (similar to config_from_sleeper_meta)
+        from draftsim.config import LeagueConfig
+        _SLOT_MAP = {
+            "QB": "QB", "RB": "RB", "WR": "WR", "TE": "TE", "K": "K",
+            "DEF": "DST", "FLEX": "FLEX", "SUPER_FLEX": "FLEX",
+            "REC_FLEX": "FLEX", "BN": None, "IR": None,
+            # MLB slots
+            "C": "C", "1B": "1B", "2B": "2B", "3B": "3B", "SS": "SS",
+            "OF": "OF", "UTIL": "FLEX", "SP": "SP", "RP": "RP", "P": "PFLEX",
+        }
+        lineup: dict[str, int] = {}
+        roster_size = 0
+        for slot in roster_positions:
+            roster_size += 1
+            mapped = _SLOT_MAP.get(slot)
+            if mapped:
+                lineup[mapped] = lineup.get(mapped, 0) + 1
+
+        if not lineup:
+            config = default_config_for_sport(sport, num_teams=num_teams)
+        else:
+            config = LeagueConfig(
+                num_teams=num_teams,
+                roster_size=roster_size,
+                lineup=lineup,
+            )
+    else:
+        config = default_config_for_sport(sport, num_teams=num_teams)
+
+    # Load our projection data
+    players = load_players(sport=sport)
+
+    # Build player index for ID resolution
+    id_to_player = build_player_index(players, all_sleeper)
+
+    # Resolve rosters
+    teams = resolve_sleeper_rosters(
+        raw_rosters, users, all_sleeper, players, id_to_player,
+    )
+
+    # Create trade session
+    session_id = str(uuid.uuid4())[:8]
+    sess = TradeSession(
+        league_id=league_id,
+        platform="sleeper",
+        sport=sport,
+        config=config,
+        teams=teams,
+        all_players=players,
+    )
+    trade_sessions[session_id] = sess
+
+    # Build response
+    team_list = []
+    for t in teams:
+        needs = roster_needs(t, config)
+        team_list.append({
+            "team_id": t.team_id,
+            "name": t.name,
+            "roster_count": len(t.roster),
+            "needs": needs,
+        })
+
+    log.info(
+        "Trade session %s: connected to Sleeper league %s (%d teams, %s)",
+        session_id, league_id, len(teams), sport,
+    )
+
+    return JSONResponse({
+        "session_id": session_id,
+        "league_name": league_info.get("name", league_id),
+        "sport": sport,
+        "num_teams": len(teams),
+        "teams": team_list,
+    })
+
+
+@app.post("/api/trade/connect-yahoo")
+async def trade_connect_yahoo(request: Request):
+    """Connect to a Yahoo Fantasy league and load rosters for trade analysis."""
+    body = await request.json()
+    league_id = str(body.get("league_id", "")).strip()
+    sport = body.get("sport", "nfl")
+    consumer_key = body.get("consumer_key")
+    consumer_secret = body.get("consumer_secret")
+
+    if not league_id:
+        raise HTTPException(status_code=400, detail="league_id is required")
+
+    try:
+        league_info = fetch_yahoo_league_info(
+            league_id, sport, consumer_key, consumer_secret,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        log.error("Yahoo connect error: %s", e)
+        raise HTTPException(status_code=502, detail=f"Yahoo API error: {e}")
+
+    # Build config from roster positions
+    config = yahoo_config_from_positions(
+        league_info["roster_positions"],
+        league_info["num_teams"],
+        sport,
+    )
+
+    # Fetch rosters for all teams
+    team_keys = [t["team_key"] for t in league_info["teams"] if t.get("team_key")]
+    if not team_keys:
+        team_keys = [t["team_id"] for t in league_info["teams"]]
+
+    try:
+        raw_rosters = fetch_yahoo_rosters(
+            league_id, sport, team_keys, consumer_key, consumer_secret,
+        )
+    except Exception as e:
+        log.error("Yahoo roster fetch error: %s", e)
+        raise HTTPException(status_code=502, detail=f"Yahoo roster error: {e}")
+
+    # Load projection data and resolve rosters
+    players = load_players(sport=sport)
+    teams = resolve_yahoo_rosters(league_info, raw_rosters, players)
+
+    # Create trade session
+    session_id = str(uuid.uuid4())[:8]
+    sess = TradeSession(
+        league_id=league_id,
+        platform="yahoo",
+        sport=sport,
+        config=config,
+        teams=teams,
+        all_players=players,
+    )
+    trade_sessions[session_id] = sess
+
+    team_list = []
+    for t in teams:
+        needs = roster_needs(t, config)
+        team_list.append({
+            "team_id": t.team_id,
+            "name": t.name,
+            "roster_count": len(t.roster),
+            "needs": needs,
+        })
+
+    log.info(
+        "Trade session %s: connected to Yahoo league %s (%d teams, %s)",
+        session_id, league_id, len(teams), sport,
+    )
+
+    return JSONResponse({
+        "session_id": session_id,
+        "league_name": league_info.get("name", league_id),
+        "sport": sport,
+        "num_teams": len(teams),
+        "teams": team_list,
+    })
+
+
+@app.get("/api/trade/teams")
+async def trade_teams(session_id: str = Query(...)):
+    """Get all teams with rosters and needs for a trade session."""
+    sess = _get_trade_session(session_id)
+
+    teams = []
+    for t in sess.teams:
+        needs = roster_needs(t, sess.config)
+        roster_players = []
+        for p in sorted(t.roster, key=lambda x: x.projected_total, reverse=True):
+            roster_players.append({
+                "name": p.name,
+                "position": p.position,
+                "team": p.team,
+                "sleeper_id": p.sleeper_id,
+                "projected_ppg": round(p.projected_ppg, 1),
+                "projected_total": round(p.projected_total, 1),
+                "total_floor": round(p.total_floor, 1),
+                "total_ceiling": round(p.total_ceiling, 1),
+                "pos_rank": p.pos_rank,
+                "age": p.age,
+                "trade_value": round(
+                    player_trade_value(p, sess.replacement_levels), 1,
+                ),
+            })
+
+        teams.append({
+            "team_id": t.team_id,
+            "name": t.name,
+            "roster": roster_players,
+            "needs": needs,
+        })
+
+    return JSONResponse({"teams": teams})
+
+
+@app.post("/api/trade/evaluate")
+async def trade_evaluate(request: Request):
+    """Evaluate a proposed trade between two teams."""
+    body = await request.json()
+    session_id = body.get("session_id", "")
+    sess = _get_trade_session(session_id)
+
+    team_a_id = str(body.get("team_a", ""))
+    team_b_id = str(body.get("team_b", ""))
+    a_gives = [str(x) for x in body.get("team_a_gives", [])]
+    b_gives = [str(x) for x in body.get("team_b_gives", [])]
+
+    if not team_a_id or not team_b_id:
+        raise HTTPException(status_code=400, detail="team_a and team_b are required")
+    if not a_gives and not b_gives:
+        raise HTTPException(status_code=400, detail="At least one side must give players")
+
+    ros_fraction = float(body.get("ros_fraction", 1.0))
+
+    result = evaluate_trade(sess, team_a_id, team_b_id, a_gives, b_gives, ros_fraction)
+    return JSONResponse(result)
+
+
+@app.get("/api/trade/free-agents")
+async def trade_free_agents(
+    session_id: str = Query(...),
+    limit: int = Query(10, ge=1, le=50),
+):
+    """Get best free agents at each position."""
+    sess = _get_trade_session(session_id)
+    fa = sess.free_agents
+    by_pos = best_at_position(fa, sess.replacement_levels)
+
+    # Serialize
+    result: dict[str, list[dict]] = {}
+    for pos, plist in by_pos.items():
+        result[pos] = [
+            {
+                "name": entry["player"].name,
+                "position": entry["player"].position,
+                "team": entry["player"].team,
+                "sleeper_id": entry["player"].sleeper_id,
+                "projected_ppg": round(entry["player"].projected_ppg, 1),
+                "projected_total": round(entry["player"].projected_total, 1),
+                "pos_rank": entry["player"].pos_rank,
+                "vorp": entry["vorp"],
+            }
+            for entry in plist[:limit]
+        ]
+
+    return JSONResponse({"free_agents": result})
+
+
+@app.get("/api/trade/players")
+async def trade_search_players(
+    session_id: str = Query(...),
+    q: str = Query("", min_length=0),
+    position: str = Query(""),
+):
+    """Search players across all rosters in the trade session."""
+    sess = _get_trade_session(session_id)
+
+    results = []
+    query = q.lower().strip()
+
+    for team in sess.teams:
+        for p in team.roster:
+            if query and query not in p.name.lower():
+                continue
+            if position and p.position != position:
+                continue
+            results.append({
+                "name": p.name,
+                "position": p.position,
+                "team": p.team,
+                "sleeper_id": p.sleeper_id,
+                "projected_ppg": round(p.projected_ppg, 1),
+                "projected_total": round(p.projected_total, 1),
+                "pos_rank": p.pos_rank,
+                "trade_value": round(
+                    player_trade_value(p, sess.replacement_levels), 1,
+                ),
+                "roster_team_id": team.team_id,
+                "roster_team_name": team.name,
+            })
+
+    results.sort(key=lambda x: x["trade_value"], reverse=True)
+    return JSONResponse({"results": results[:50]})
 
 
 @app.get("/trade", response_class=HTMLResponse)

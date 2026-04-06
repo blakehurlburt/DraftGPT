@@ -4,14 +4,183 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trade Calculator</title>
-    <link rel="stylesheet" href="/static/style.css?v=1">
-    <link rel="stylesheet" href="/static/trade.css?v=1">
+    <link rel="stylesheet" href="/static/style.css?v=5">
+    <link rel="stylesheet" href="/static/trade.css?v=3">
 </head>
 <body>
-    <div id="trade-app">
-        <h1>Trade Calculator</h1>
-        <p>Coming soon.</p>
+    <!-- Connection Screen -->
+    <div id="trade-welcome">
+        <div class="welcome-card">
+            <h1>Trade Calculator</h1>
+            <p class="welcome-subtitle">Evaluate trades, analyze roster needs, and find the best deals</p>
+
+            <div class="mode-tabs">
+                <button class="mode-tab active" data-platform="sleeper">Sleeper</button>
+                <button class="mode-tab" data-platform="yahoo">Yahoo</button>
+            </div>
+
+            <!-- Sleeper form -->
+            <div id="sleeper-connect" class="welcome-form">
+                <label>Sport</label>
+                <div class="sport-selector">
+                    <label class="sport-radio"><input type="radio" name="sport" value="nfl" checked><span class="sport-chip">NFL</span></label>
+                    <label class="sport-radio"><input type="radio" name="sport" value="mlb"><span class="sport-chip">MLB</span></label>
+                </div>
+                <label for="league-id">Sleeper League ID</label>
+                <input type="text" id="league-id" placeholder="League ID or Sleeper URL">
+                <button id="connect-btn">Connect</button>
+                <span id="connect-status"></span>
+                <p class="welcome-hint">Paste a Sleeper league URL or just the league ID</p>
+            </div>
+
+            <!-- Yahoo form -->
+            <div id="yahoo-connect" class="welcome-form hidden">
+                <label>Sport</label>
+                <div class="sport-selector">
+                    <label class="sport-radio"><input type="radio" name="yahoo-sport" value="nfl" checked><span class="sport-chip">NFL</span></label>
+                    <label class="sport-radio"><input type="radio" name="yahoo-sport" value="mlb"><span class="sport-chip">MLB</span></label>
+                </div>
+                <label for="yahoo-league-id">Yahoo League ID</label>
+                <input type="text" id="yahoo-league-id" placeholder="Numeric league ID from your Yahoo league URL">
+                <label for="yahoo-key">Consumer Key</label>
+                <input type="text" id="yahoo-key" placeholder="Yahoo Developer app consumer key">
+                <label for="yahoo-secret">Consumer Secret</label>
+                <input type="password" id="yahoo-secret" placeholder="Yahoo Developer app consumer secret">
+                <button id="yahoo-connect-btn">Connect</button>
+                <span id="yahoo-status"></span>
+                <p class="welcome-hint">Get credentials at <a href="https://developer.yahoo.com/apps/" target="_blank" style="color:#4fc3f7">developer.yahoo.com/apps</a></p>
+            </div>
+
+            <div class="trade-nav-links">
+                <a href="/" class="adj-nav-link">Draft Assistant</a>
+            </div>
+        </div>
     </div>
-    <script src="/static/trade.js?v=1"></script>
+
+    <!-- Main Trade Interface (post-connect) -->
+    <div id="trade-main" class="hidden">
+        <!-- Header -->
+        <header id="trade-header">
+            <div class="trade-header-left">
+                <h1>Trade Calculator</h1>
+                <span id="trade-league-name" class="trade-league-badge"></span>
+            </div>
+            <div class="trade-header-right">
+                <a href="/" class="adj-nav-link">Draft Assistant</a>
+            </div>
+        </header>
+
+        <!-- Trade Builder -->
+        <div id="trade-builder">
+            <!-- Team A Side -->
+            <div class="trade-side" id="side-a">
+                <div class="trade-side-header">
+                    <select id="team-a-select" class="trade-team-select">
+                        <option value="">Select Team</option>
+                    </select>
+                    <span class="trade-side-label">gives</span>
+                </div>
+                <div class="trade-player-search">
+                    <input type="text" id="search-a" class="trade-search-input" placeholder="Search players..." disabled>
+                    <div id="search-a-results" class="trade-search-dropdown hidden"></div>
+                </div>
+                <div id="side-a-players" class="trade-player-list">
+                    <div class="trade-empty-msg">Select a team and add players</div>
+                </div>
+                <div class="trade-side-total">
+                    <span>Total Value:</span>
+                    <span id="side-a-value" class="trade-value-num">0</span>
+                </div>
+            </div>
+
+            <!-- Center: Fairness Meter -->
+            <div id="trade-center">
+                <div id="fairness-meter">
+                    <div id="fairness-label">Select teams to begin</div>
+                    <div id="fairness-bar-wrap">
+                        <div id="fairness-bar"></div>
+                    </div>
+                    <div id="fairness-delta"></div>
+                </div>
+                <button id="evaluate-btn" class="trade-btn-primary" disabled>Evaluate Trade</button>
+            </div>
+
+            <!-- Team B Side -->
+            <div class="trade-side" id="side-b">
+                <div class="trade-side-header">
+                    <select id="team-b-select" class="trade-team-select">
+                        <option value="">Select Team</option>
+                    </select>
+                    <span class="trade-side-label">gives</span>
+                </div>
+                <div class="trade-player-search">
+                    <input type="text" id="search-b" class="trade-search-input" placeholder="Search players..." disabled>
+                    <div id="search-b-results" class="trade-search-dropdown hidden"></div>
+                </div>
+                <div id="side-b-players" class="trade-player-list">
+                    <div class="trade-empty-msg">Select a team and add players</div>
+                </div>
+                <div class="trade-side-total">
+                    <span>Total Value:</span>
+                    <span id="side-b-value" class="trade-value-num">0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Trade Result Panel -->
+        <div id="trade-result" class="hidden">
+            <div id="trade-summary">
+                <h3 id="result-headline"></h3>
+                <ul id="result-reasons"></ul>
+            </div>
+
+            <!-- Roster Impact Side-by-Side -->
+            <div id="roster-impact">
+                <div class="impact-side">
+                    <h4 id="impact-a-name"></h4>
+                    <div class="impact-stat">
+                        <span>Starter VORP</span>
+                        <span id="impact-a-before" class="impact-before"></span>
+                        <span class="impact-arrow">&rarr;</span>
+                        <span id="impact-a-after" class="impact-after"></span>
+                        <span id="impact-a-delta" class="impact-delta"></span>
+                    </div>
+                    <div id="impact-a-needs" class="impact-needs"></div>
+                </div>
+                <div class="impact-side">
+                    <h4 id="impact-b-name"></h4>
+                    <div class="impact-stat">
+                        <span>Starter VORP</span>
+                        <span id="impact-b-before" class="impact-before"></span>
+                        <span class="impact-arrow">&rarr;</span>
+                        <span id="impact-b-after" class="impact-after"></span>
+                        <span id="impact-b-delta" class="impact-delta"></span>
+                    </div>
+                    <div id="impact-b-needs" class="impact-needs"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Roster Needs + Free Agents (below trade builder) -->
+        <div id="trade-panels">
+            <!-- Roster Needs Panel -->
+            <div id="needs-panel" class="trade-panel">
+                <h3>Roster Needs</h3>
+                <div id="needs-content">
+                    <p class="trade-empty-msg">Select teams above to see needs</p>
+                </div>
+            </div>
+
+            <!-- Free Agents Panel -->
+            <div id="fa-panel" class="trade-panel">
+                <h3>Best Free Agents</h3>
+                <div id="fa-content">
+                    <p class="trade-empty-msg">Connect to a league to see free agents</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/trade.js?v=3"></script>
 </body>
 </html>

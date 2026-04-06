@@ -58,6 +58,31 @@ async def fetch_all_players(client: httpx.AsyncClient) -> dict[str, dict]:
     return data
 
 
+async def fetch_league_info(client: httpx.AsyncClient, league_id: str) -> dict:
+    """Fetch league metadata: settings, scoring, roster positions."""
+    resp = await client.get(f"{BASE_URL}/v1/league/{league_id}")
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def fetch_league_rosters(client: httpx.AsyncClient, league_id: str) -> list[dict]:
+    """Fetch all rosters in a league.
+
+    Each roster dict contains: roster_id, owner_id, players (list of player IDs),
+    starters (list of player IDs), settings, etc.
+    """
+    resp = await client.get(f"{BASE_URL}/v1/league/{league_id}/rosters")
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def fetch_league_users(client: httpx.AsyncClient, league_id: str) -> list[dict]:
+    """Fetch league users (display names, avatars, team metadata)."""
+    resp = await client.get(f"{BASE_URL}/v1/league/{league_id}/users")
+    resp.raise_for_status()
+    return resp.json()
+
+
 async def fetch_projections(
     client: httpx.AsyncClient, season: int = 2026,
 ) -> dict[str, dict]:
