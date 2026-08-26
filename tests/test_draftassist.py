@@ -334,6 +334,19 @@ class TestRookiesInPayload:
             f"Expected >=10 rookies in projections, got {len(rookies)}"
         )
 
+    def test_loader_uses_explicit_rookie_and_draft_fields(self, tmp_path):
+        path = tmp_path / "projections.csv"
+        path.write_text(
+            "player_display_name,position_group,current_team,projected_ppg,"
+            "projected_games,projected_total,pos_rank,is_rookie,draft_round,draft_number\n"
+            "Rookie Example,RB,ARI,10,17,170,1,1.0,2.0,35.0\n"
+        )
+        [player] = load_players(path, sport="nfl")
+        assert player.is_rookie is True
+        assert player.team == "ARI"
+        assert player.draft_round == 2
+        assert player.draft_number == 35
+
     def test_rookies_in_available_pool(self, real_players):
         """Rookies must be in DraftState.available at draft start."""
         config = LeagueConfig()

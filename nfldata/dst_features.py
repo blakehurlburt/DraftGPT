@@ -11,7 +11,8 @@ import nflreadpy as nfl
 # Team abbreviation normalization for franchise relocations/renames
 _TEAM_NORM = {
     "OAK": "LV",
-    "STL": "LA",
+    "STL": "LAR",
+    "LA": "LAR",
     "SD": "LAC",
     "WAS": "WSH",
 }

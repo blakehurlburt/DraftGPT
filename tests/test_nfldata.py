@@ -142,6 +142,29 @@ class TestDataFiles:
         path = Path("data/rosters.csv")
         assert path.exists(), f"Missing {path}"
 
+    def test_2026_roster_and_draft_metadata_is_current(self):
+        """Current teams and actual NFL draft slots must remain attached."""
+        import csv
+
+        with open("data/rosters.csv") as f:
+            rows = {r["player_name"]: r for r in csv.DictReader(
+                line for line in f if not line.startswith("#")
+            )}
+
+        expected = {
+            "Fernando Mendoza": ("LV", "1", "1"),
+            "Jeremiyah Love": ("ARI", "1", "3"),
+            "Carnell Tate": ("TEN", "1", "4"),
+            "Jordyn Tyson": ("NO", "1", "8"),
+            "Ty Simpson": ("LAR", "1", "13"),
+            "Makai Lemon": ("PHI", "1", "20"),
+        }
+        for name, (team, draft_round, pick) in expected.items():
+            row = rows[name]
+            assert row["team"] == team
+            assert row["draft_round"] == draft_round
+            assert row["draft_number"] == pick
+
     def test_projections_has_players(self):
         import csv
         with open("data/projections/all_projections.csv") as f:
@@ -165,6 +188,39 @@ class TestDataFiles:
         ]
         for rookie in expected_rookies:
             assert rookie in names, f"2026 rookie {rookie} missing from projections"
+
+    def test_projection_rookies_include_explicit_draft_metadata(self):
+        import csv
+
+        with open("data/projections/all_projections.csv") as f:
+            rows = {r["player_display_name"]: r for r in csv.DictReader(f)}
+        for name in ["Fernando Mendoza", "Jeremiyah Love", "Carnell Tate"]:
+            assert rows[name]["is_rookie"] == "1.0"
+            assert rows[name]["current_team"]
+            assert rows[name]["draft_round"] == "1.0"
+            assert rows[name]["draft_number"]
+
+    def test_projection_teams_match_active_rosters(self):
+        import csv
+
+        with open("data/rosters.csv") as f:
+            roster_rows = list(csv.DictReader(
+                line for line in f if not line.startswith("#")
+            ))
+        rosters = {r["player_name"]: r for r in roster_rows}
+        with open("data/projections/all_projections.csv") as f:
+            projections = list(csv.DictReader(f))
+
+        active = {"ACT", "RES", "PUP", "NFI"}
+        aliases = {"AZ", "LA", "JAC", "LVR", "NOR", "TAM"}
+        for row in projections:
+            assert row["current_team"] not in aliases
+            if row["position_group"] == "DST":
+                continue
+            roster = rosters.get(row["player_display_name"])
+            if roster is not None:
+                assert row["current_team"] == roster["team"]
+                assert roster["status"] in active
 
     @nflreadpy_required
     def test_no_rookies_in_historical_data(self):

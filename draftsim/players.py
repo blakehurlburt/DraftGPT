@@ -12,7 +12,7 @@ from pathlib import Path
 # _TEAM_ALIASES = {"JAC": "JAX"}. These two maps are not shared, so if the
 # projections CSV uses "JAC" it won't be normalised, and if the ADP CSV uses
 # "LA" it won't be normalised either. Both maps should be unified.
-_TEAM_NORMALIZE = {"LA": "LAR"}
+_TEAM_NORMALIZE = {"LA": "LAR", "AZ": "ARI", "JAC": "JAX"}
 
 
 @dataclass
@@ -30,6 +30,8 @@ class Player:
     total_ceiling: float = 0.0  # 90th percentile season total
     bye_week: int = 0
     is_rookie: bool = False
+    draft_round: int | None = None
+    draft_number: int | None = None
     age: int | None = None
     sleeper_id: str = ""
     # Sleeper projection values (populated at connect time)
@@ -113,11 +115,10 @@ def load_players(
                     pos_rank=int(row["pos_rank"]),
                     total_floor=float(row.get("total_floor", 0)),
                     total_ceiling=float(row.get("total_ceiling", 0)),
-                    # CR opus: `not raw_team` flags a player as a rookie when their team is
-                    # empty/missing. This is a fragile heuristic — an empty team string could
-                    # indicate bad data rather than rookie status, and actual rookies on known
-                    # teams will be missed. Consider using an explicit "is_rookie" CSV column.
-                    is_rookie=not raw_team if sport == "nfl" else False,
+                    is_rookie=(row.get("is_rookie", "").strip() in {"1", "1.0", "true", "True"})
+                    if sport == "nfl" else False,
+                    draft_round=_optional_int(row.get("draft_round")),
+                    draft_number=_optional_int(row.get("draft_number")),
                 )
             )
 
@@ -141,6 +142,13 @@ def load_players(
             pass
 
     return players
+
+
+def _optional_int(value: str | None) -> int | None:
+    """Parse optional numeric CSV metadata such as ``1`` or ``1.0``."""
+    if value is None or not value.strip():
+        return None
+    return int(float(value))
 
 
 def _attach_mlb_ages(players: list[Player]) -> None:

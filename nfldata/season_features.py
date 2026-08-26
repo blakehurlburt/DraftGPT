@@ -618,12 +618,23 @@ def _add_combine_draft_features(df):
     print(f"  Combine: {combine.shape[0]} players matched")
 
     # --- Draft round ---
-    draft = nfl.load_draft_picks()
-    draft = (
-        draft.select(["gsis_id", "round"])
+    draft_raw = nfl.load_draft_picks()
+    draft_gsis = (
+        draft_raw.select(["gsis_id", "round"])
         .drop_nulls(subset=["gsis_id"])
         .unique(subset=["gsis_id"])
         .rename({"gsis_id": "player_id", "round": "draft_round"})
+    )
+    # Projection-year rookie rows use PFR IDs. nflverse's current draft feed
+    # may expose provisional GSIS IDs, so retain the PFR-keyed path as well.
+    draft_pfr = (
+        draft_raw.select(["pfr_player_id", "round"])
+        .drop_nulls(subset=["pfr_player_id"])
+        .unique(subset=["pfr_player_id"])
+        .rename({"pfr_player_id": "player_id", "round": "draft_round"})
+    )
+    draft = pl.concat([draft_gsis, draft_pfr], how="diagonal").unique(
+        subset=["player_id"], keep="first"
     )
     # Cast to float for XGBoost compatibility
     if draft["draft_round"].dtype != pl.Float64:
@@ -1022,7 +1033,7 @@ def _backfill_projection_metadata(df, projection_year, rookie_rows):
     return df
 
 
-def _build_rookie_rows(projection_year, season_df):
+def _build_rookie_rows(projection_year, season_df, rosters=None):
     """Create projection rows for rookies from combine data.
 
     Uses pfr_id as player_id since rookies don't have a gsis_id yet.
@@ -1043,11 +1054,51 @@ def _build_rookie_rows(projection_year, season_df):
         rookie_rows = combine.select([
             pl.col("pfr_id").alias("player_id"),
             pl.lit(projection_year).alias("season"),
-            pl.lit(None).cast(pl.Utf8).alias("team"),
             pl.col("position_group"),
             pl.col("player_name").alias("player_display_name"),
             pl.lit(0).alias("years_exp"),
         ])
+
+        # Actual draft results provide draft team and overall selection even
+        # when the current roster snapshot has not yet populated every ID.
+        draft = (
+            nfl.load_draft_picks([projection_year])
+            .select([
+                pl.col("pfr_player_id").alias("player_id"),
+                pl.col("team").alias("_draft_team"),
+                pl.col("pick").cast(pl.Float64).alias("draft_number"),
+            ])
+            .drop_nulls(subset=["player_id"])
+            .unique(subset=["player_id"])
+        )
+        rookie_rows = rookie_rows.join(draft, on="player_id", how="left")
+
+        if rosters is not None and "current_team" in rosters.columns:
+            roster_cols = ["player_id", "current_team"]
+            if "current_draft_number" in rosters.columns:
+                roster_cols.append("current_draft_number")
+            current = rosters.select(roster_cols).unique(subset=["player_id"])
+            rookie_rows = rookie_rows.join(current, on="player_id", how="left")
+            if "current_draft_number" in rookie_rows.columns:
+                rookie_rows = rookie_rows.with_columns(
+                    pl.col("draft_number")
+                    .fill_null(pl.col("current_draft_number").cast(pl.Float64))
+                    .alias("draft_number")
+                ).drop("current_draft_number")
+            rookie_rows = rookie_rows.with_columns(
+                pl.coalesce(["current_team", "_draft_team"])
+                .replace({"LVR": "LV", "NOR": "NO", "TAM": "TB", "SFO": "SF",
+                          "GNB": "GB", "KAN": "KC", "NWE": "NE", "LA": "LAR",
+                          "AZ": "ARI"})
+                .alias("team")
+            ).drop(["current_team", "_draft_team"])
+        else:
+            rookie_rows = rookie_rows.with_columns(
+                pl.col("_draft_team")
+                .replace({"LVR": "LV", "NOR": "NO", "TAM": "TB", "SFO": "SF",
+                          "GNB": "GB", "KAN": "KC", "NWE": "NE"})
+                .alias("team")
+            ).drop("_draft_team")
 
         existing_ids = set(season_df["player_id"].unique().to_list())
         rookie_rows = rookie_rows.filter(~pl.col("player_id").is_in(list(existing_ids)))
@@ -1112,7 +1163,7 @@ def build_season_features(seasons, *, projection_year=None, rosters=None):
             ).drop("_fallback_team")
 
         # Rookie rows from combine data
-        rookie_rows = _build_rookie_rows(proj_year, season_df)
+        rookie_rows = _build_rookie_rows(proj_year, season_df, rosters=rosters)
 
         parts = [season_df, dummy]
         if rookie_rows is not None and rookie_rows.shape[0] > 0:

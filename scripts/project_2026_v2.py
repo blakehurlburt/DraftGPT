@@ -7,9 +7,14 @@ Combines with rosters.csv for team assignments.
 """
 
 import json
+import sys
 import polars as pl
 import numpy as np
 from pathlib import Path
+
+# Allow the documented direct invocation from the repository root.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from nfldata.season_features import build_season_features, get_season_feature_columns
 from nfldata.season_model import train_final_model, project_season, calibrate_predictions
 from nfldata.kicker_features import build_kicker_features, build_kicker_projection_features
@@ -31,7 +36,7 @@ OUTPUT_DIR = Path(__file__).parent.parent / "data" / "projections"
 
 
 def get_current_rosters():
-    """Load current rosters from rosters.csv (requires gsis_id column)."""
+    """Load current rosters keyed by both GSIS and PFR IDs."""
     if not ROSTER_PATH.exists():
         raise FileNotFoundError(
             "rosters.csv not found — run 'python scripts/update_rosters.py' first"
@@ -40,28 +45,30 @@ def get_current_rosters():
     roster_df = pl.read_csv(ROSTER_PATH, comment_prefix="#")
     print(f"  Loaded {roster_df.shape[0]} players from rosters.csv")
 
-    return roster_df.select([
-        pl.col("gsis_id").alias("player_id"),
+    common = [
         pl.col("team").alias("current_team"),
         pl.col("position").alias("current_position"),
         pl.col("status").alias("current_status"),
-    ])
+        pl.col("rookie_year").alias("current_rookie_year"),
+        pl.col("draft_round").alias("current_draft_round"),
+        pl.col("draft_number").alias("current_draft_number"),
+        pl.col("adjustment_ppg").fill_null(0.0),
+    ]
+    by_gsis = roster_df.select([
+        pl.col("gsis_id").alias("player_id"),
+        *common,
+    ]).filter(pl.col("player_id").is_not_null())
+    by_pfr = roster_df.select([
+        pl.col("pfr_id").alias("player_id"),
+        *common,
+    ]).filter(pl.col("player_id").is_not_null())
+    return pl.concat([by_gsis, by_pfr], how="vertical").unique(subset=["player_id"])
 
 
 def main():
     # Step 1: Get current rosters (needed for projection features)
     print("Loading current rosters...")
     rosters = get_current_rosters()
-
-    # Load adjustment_ppg from rosters.csv if available
-    if ROSTER_PATH.exists():
-        roster_raw = pl.read_csv(ROSTER_PATH, comment_prefix="#")
-        if "adjustment_ppg" in roster_raw.columns:
-            adj_df = roster_raw.select([
-                pl.col("gsis_id").alias("player_id"),
-                "adjustment_ppg",
-            ]).filter(pl.col("player_id").is_not_null())
-            rosters = rosters.join(adj_df, on="player_id", how="left")
 
     # Step 2: Build unified feature matrix (training + projection in one pass)
     print("\nBuilding season features (2009-2025 + 2026 projection)...")
@@ -128,6 +135,13 @@ def main():
     # Join with rosters
     results = results.join(rosters, on="player_id", how="left")
 
+    for column in ["draft_round", "draft_number"]:
+        current_column = f"current_{column}"
+        if column in results.columns and current_column in results.columns:
+            results = results.with_columns(
+                pl.col(column).fill_null(pl.col(current_column)).alias(column)
+            )
+
     # Fill missing current_team from the feature data's team column
     if "team" in results.columns and "current_team" in results.columns:
         results = results.with_columns(
@@ -138,10 +152,7 @@ def main():
     # CR opus: allowing unmatched (potentially retired/cut) players into projections.
     # Filter to active players
     active_statuses = ["ACT", "RES", "PUP", "NFI"]
-    results = results.filter(
-        pl.col("current_status").is_in(active_statuses)
-        | pl.col("current_status").is_null()
-    )
+    results = results.filter(pl.col("current_status").is_in(active_statuses))
 
     # --- Kicker Projections ---
     print("\n--- Kicker Model ---")
@@ -150,6 +161,10 @@ def main():
     k_ppg, k_games, k_imp, k_qmodels = train_kicker_model(k_df)
     k_proj_df = build_kicker_projection_features(range(2009, 2026), rosters=rosters)
     k_results = project_kicker_season(k_ppg, k_games, k_proj_df, quantile_models=k_qmodels)
+    k_results = k_results.join(
+        rosters.select(["player_id", "current_team", "current_status"]),
+        on="player_id", how="left",
+    ).filter(pl.col("current_status").is_in(active_statuses))
 
     # --- DST Projections ---
     print("\n--- DST Model ---")
@@ -257,6 +272,7 @@ def _write_projection_csvs(results, k_results=None, dst_results=None):
 
     # Columns for the CSV output
     csv_cols = ["player_display_name", "position_group", "current_team",
+                "is_rookie", "draft_round", "draft_number",
                 "projected_ppg", "ppg_median", "ppg_floor", "ppg_ceiling",
                 "projected_games", "projected_total", "total_floor", "total_ceiling",
                 "pos_rank"]
