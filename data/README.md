@@ -9,7 +9,7 @@ The web app's welcome page shows when each file was last updated.
 
 | File | Source | How to Update |
 |------|--------|---------------|
-| `FantasyPros_2025_Overall_ADP_Rankings.csv` | [FantasyPros PPR ADP](https://www.fantasypros.com/nfl/adp/ppr-overall.php) | Manual CSV download. Export "Overall" PPR rankings. |
+| `FantasyPros_2026_Overall_ADP_Rankings.csv` | [FantasyPros PPR ADP](https://www.fantasypros.com/nfl/adp/ppr-overall.php) | Current PPR consensus and per-platform ADP (ESPN, Sleeper, CBS, RTSports, Fantrax), refreshed August 26, 2026. |
 | `projections/*.csv` | Model output | Run `python scripts/project_2026_v2.py`. Generates QB/RB/WR/TE + all_projections. |
 | `rosters.csv` | [nflverse](https://github.com/nflverse/nflverse-data) | Run `python scripts/update_rosters.py`. Fetches from nflverse API. |
 

@@ -152,11 +152,10 @@ app = FastAPI(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Data sources tracked for freshness display
-# CR opus: Filename hardcodes "2025" — should be updated or parameterized for 2026 season.
 _DATA_SOURCES = [
     {
         "name": "ADP Rankings",
-        "file": DATA_DIR / "FantasyPros_2025_Overall_ADP_Rankings.csv",
+        "file": DATA_DIR / "FantasyPros_2026_Overall_ADP_Rankings.csv",
         "url": "https://www.fantasypros.com/nfl/adp/ppr-overall.php",
         "how": "Manual download (CSV export)",
     },

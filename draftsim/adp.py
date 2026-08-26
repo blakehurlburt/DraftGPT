@@ -1,7 +1,7 @@
 """ADP data from FantasyPros aggregated rankings.
 
 Loads real ADP data from a FantasyPros CSV export containing per-platform
-columns (ESPN, Sleeper, CBS, NFL, RTSports, Fantrax) plus an AVG consensus.
+columns (ESPN, Sleeper, CBS, RTSports, Fantrax) plus an AVG consensus.
 """
 
 from __future__ import annotations
@@ -13,8 +13,7 @@ from typing import Optional
 
 from .players import Player
 
-# CR opus: Hardcoded "2025" in filename — should derive from current season or be configurable.
-ADP_CSV = Path(__file__).parent.parent / "data" / "FantasyPros_2025_Overall_ADP_Rankings.csv"
+ADP_CSV = Path(__file__).parent.parent / "data" / "FantasyPros_2026_Overall_ADP_Rankings.csv"
 
 # Map CSV column names to our platform keys
 PLATFORM_COLUMNS = {
@@ -22,7 +21,6 @@ PLATFORM_COLUMNS = {
     "espn": "ESPN",
     "sleeper": "Sleeper",
     "cbs": "CBS",
-    "nfl": "NFL",
     "rtsports": "RTSports",
     "fantrax": "Fantrax",
 }
