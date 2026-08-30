@@ -47,7 +47,7 @@
     let currentAdp = "consensus";
     let currentRisk = "balanced";  // "safe", "balanced", "aggressive"
     let currentProj = "sleeper";  // "model" or "sleeper"
-    let currentValueMode = "vbd_score";  // "vorp", "vona", "vols", "vbd_score"
+    let currentValueMode = "strategy_score";  // "strategy_score", "vorp", "vona", or "vols"
     let currentSort = "value";  // "value", "adp", or "rank"
     // CR opus: Hardcoded NFL positions here, but initSportUI() resets them dynamically.
     // If initSportUI() is ever skipped or fails, this stale NFL set would filter out all
@@ -625,14 +625,14 @@
     }
 
     const VALUE_LABELS = {
-        "vbd_score": "VBD",
+        "strategy_score": "VBD",
         "vorp": "VORP",
         "vona": "VONA",
         "vols": "VOLS",
     };
 
     const VALUE_TOOLTIPS = {
-        "vbd_score": "Composite VBD Score — aggregates VORP + VONA + VOLS into one number for cross-position comparison",
+        "strategy_score": "Roster-adjusted strategy score — applies positional need, VONA urgency, and risk profile",
         "vorp": "Value Over Replacement Player — points above the best waiver-wire player at this position",
         "vona": "Value Over Next Available — how much this position's value drops before your next pick",
         "vols": "Value Over Last Starter — points above the worst starter at this position across the league",

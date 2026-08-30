@@ -534,6 +534,15 @@ class TestManualPayload:
         assert payload["current_pick"] == 1
         assert payload["num_teams"] == small_config.num_teams
 
+        expected = {
+            r.player.name: round(r.strategy_score, 1)
+            for r in get_recommendations(
+                state, 0, sample_players, n=30, risk_profile="balanced",
+            )
+        }
+        balanced = payload["recommendations"]["balanced"]
+        assert {r["name"]: r["strategy_score"] for r in balanced} == expected
+
     def test_player_rankings_include_drafted_players(self, sample_players, small_config):
         """UI ranking must use the full pool, not renumber available players."""
         from draftassist.app import _build_state_payload
@@ -568,7 +577,8 @@ class TestRecommendationTableUI:
 
     def test_app_script_cache_key_was_bumped(self):
         html = Path("draftassist/static/index.html").read_text()
-        assert '<script src="/static/app.js?v=17"></script>' in html
+        assert 'data-value="strategy_score"' in html
+        assert '<script src="/static/app.js?v=18"></script>' in html
 
 
 # ---------------------------------------------------------------------------
