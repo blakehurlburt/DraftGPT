@@ -464,6 +464,22 @@
             render: (r) => r.display_rank ?? "—",
         },
         {
+            key: "value", label: "VBD", id: "value-header",
+            sortKey: "value",
+            title: "Composite VBD Score — aggregates VORP + VONA + VOLS",
+            cls: "sortable",
+            render: (r, ctx) => {
+                const v = r[ctx.valueMode];
+                return v != null && v > 0 ? v.toFixed(1) : "—";
+            },
+        },
+        {
+            key: "adp", label: "ADP", sortKey: "adp",
+            title: "Average Draft Position (click to sort)",
+            cls: "sortable",
+            render: (r) => r.adp && r.adp < 999 ? r.adp : "—",
+        },
+        {
             key: "name", label: "Player",
             // CR opus: Same XSS concern — r.name is injected into innerHTML without escaping.
             // This applies to all render() functions in REC_COLUMNS and ROSTER_COLUMNS that
@@ -523,22 +539,6 @@
             render: (r) => r.projected_games || "—",
         },
         {
-            key: "value", label: "VBD", id: "value-header",
-            sortKey: "value",
-            title: "Composite VBD Score — aggregates VORP + VONA + VOLS",
-            cls: "sortable active",
-            render: (r, ctx) => {
-                const v = r[ctx.valueMode];
-                return v != null && v > 0 ? v.toFixed(1) : "—";
-            },
-        },
-        {
-            key: "adp", label: "ADP", sortKey: "adp",
-            title: "Average Draft Position (click to sort)",
-            cls: "sortable",
-            render: (r) => r.adp && r.adp < 999 ? r.adp : "—",
-        },
-        {
             key: "sim", label: "Sim", id: "sim-value-header",
             title: "Expected lineup total if you pick this player (from Monte Carlo sim)",
             hidden: (ctx) => !ctx.showSim,
@@ -596,6 +596,9 @@
                 if (c.id) attrs.push(`id="${c.id}"`);
                 const classes = c.cls ? c.cls.split(" ") : [];
                 if (c.sortKey && !classes.includes("sortable")) classes.push("sortable");
+                if (c.sortKey && c.sortKey === ctx.currentSort && !classes.includes("active")) {
+                    classes.push("active");
+                }
                 if (classes.length) attrs.push(`class="${classes.join(" ")}"`);
                 if (c.sortKey) attrs.push(`data-sort="${c.sortKey}"`);
                 if (c.title) attrs.push(`title="${c.title}"`);
@@ -1165,7 +1168,14 @@
     function renderRecommendations(state) {
         const allRecs = getAllRecsForStrategy(currentStrategy);
         const floorEstimated = !!(state.floor_estimated);
-        const ctx = { showSim: !!simData, currentStrategy, getSimValue, valueMode: currentValueMode, floorEstimated };
+        const ctx = {
+            showSim: !!simData,
+            currentStrategy,
+            currentSort,
+            getSimValue,
+            valueMode: currentValueMode,
+            floorEstimated,
+        };
 
         const filteredRank = new Map();
         for (const player of state.player_rankings || []) {
@@ -1187,8 +1197,6 @@
         $$("#rec-head th.sortable").forEach((th) => {
             th.addEventListener("click", () => {
                 currentSort = th.dataset.sort;
-                $$("#rec-head th.sortable").forEach((t) => t.classList.remove("active"));
-                th.classList.add("active");
                 if (currentState) renderRecommendations(currentState);
             });
         });

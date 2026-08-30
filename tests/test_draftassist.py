@@ -1,5 +1,7 @@
 """Tests for the draftassist package."""
 
+from pathlib import Path
+
 import pytest
 
 from draftsim.players import Player, load_players
@@ -547,6 +549,26 @@ class TestManualPayload:
         assert rankings[0]["name"] == drafted.name
         assert [p["name"] for p in rankings] == [p.name for p in sample_players]
         assert all(set(p) == {"name", "position", "is_rookie"} for p in rankings)
+
+
+class TestRecommendationTableUI:
+    @pytest.fixture
+    def rec_columns_source(self):
+        source = Path("draftassist/static/app.js").read_text()
+        return source.split("const REC_COLUMNS = [", 1)[1].split("const ROSTER_COLUMNS", 1)[0]
+
+    def test_value_columns_precede_player(self, rec_columns_source):
+        assert rec_columns_source.index('key: "value"') < rec_columns_source.index('key: "name"')
+        assert rec_columns_source.index('key: "adp"') < rec_columns_source.index('key: "name"')
+
+    def test_active_sort_is_not_hard_coded(self, rec_columns_source):
+        source = Path("draftassist/static/app.js").read_text()
+        assert 'cls: "sortable active"' not in rec_columns_source
+        assert 'c.sortKey && c.sortKey === ctx.currentSort' in source
+
+    def test_app_script_cache_key_was_bumped(self):
+        html = Path("draftassist/static/index.html").read_text()
+        assert '<script src="/static/app.js?v=17"></script>' in html
 
 
 # ---------------------------------------------------------------------------
