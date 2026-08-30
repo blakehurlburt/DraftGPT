@@ -295,6 +295,11 @@ def attach_sleeper_projections(
         if not stats:
             continue
 
+        try:
+            p.sleeper_adp_ppr = float(stats.get("adp_ppr", 0) or 0)
+        except (TypeError, ValueError):
+            p.sleeper_adp_ppr = 0.0
+
         pts = sleeper_stats_to_fantasy_points(stats, scoring)
         if pts <= 0:
             continue

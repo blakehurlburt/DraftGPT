@@ -190,6 +190,32 @@ class TestConfigFromSleeperMeta:
         assert "QB" in config.lineup
 
 
+class TestAttachSleeperProjections:
+    def test_attaches_native_ppr_adp(self):
+        player = _make_player("DeVonta Smith", "WR", 200)
+        player.sleeper_id = "7525"
+
+        matched = attach_sleeper_projections(
+            [player],
+            {"7525": {"adp_ppr": 55.0, "rec": 80, "rec_yd": 1000}},
+        )
+
+        assert matched == 1
+        assert player.sleeper_adp_ppr == 55.0
+
+    def test_attaches_adp_even_without_projected_points(self):
+        player = _make_player("Test Player", "WR", 200)
+        player.sleeper_id = "123"
+
+        matched = attach_sleeper_projections(
+            [player],
+            {"123": {"adp_ppr": 42.5}},
+        )
+
+        assert matched == 0
+        assert player.sleeper_adp_ppr == 42.5
+
+
 # ---------------------------------------------------------------------------
 # bridge.rebuild_draft_state
 # ---------------------------------------------------------------------------

@@ -154,7 +154,14 @@ def generate_platform_adp(
     platform: str,
     rng=None,  # ignored — kept for API compat
 ) -> list[tuple[Player, float]]:
-    """Return platform-specific ADP from FantasyPros."""
+    """Return platform-specific ADP, preferring native Sleeper PPR data."""
+    if platform == "sleeper" and any(p.sleeper_adp_ppr > 0 for p in players):
+        entries = [
+            (p, p.sleeper_adp_ppr if p.sleeper_adp_ppr > 0 else 999.0)
+            for p in players
+        ]
+        entries.sort(key=lambda entry: entry[1])
+        return entries
     return load_adp_for_platform(players, platform)
 
 

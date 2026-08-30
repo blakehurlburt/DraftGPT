@@ -472,6 +472,23 @@ class TestADP:
         adps = [adp for _, adp in entries]
         assert adps == sorted(adps)
 
+    def test_sleeper_prefers_native_ppr_adp(self, sample_players):
+        sample_players[0].sleeper_adp_ppr = 55.0
+        sample_players[1].sleeper_adp_ppr = 36.0
+
+        entries = generate_platform_adp(sample_players, "sleeper")
+
+        assert entries[0] == (sample_players[1], 36.0)
+        assert entries[1] == (sample_players[0], 55.0)
+
+    def test_sleeper_native_adp_leaves_missing_players_unranked(self, sample_players):
+        sample_players[0].sleeper_adp_ppr = 55.0
+
+        entries = generate_platform_adp(sample_players, "sleeper")
+
+        assert entries[0] == (sample_players[0], 55.0)
+        assert all(adp == 999.0 for _, adp in entries[1:])
+
     def test_consensus_adp(self, sample_players):
         entries = generate_consensus_adp(sample_players)
         assert len(entries) == len(sample_players)
