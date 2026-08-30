@@ -46,7 +46,7 @@
     let currentStrategy = "vona";  // strategy used for generating recommendations
     let currentAdp = "consensus";
     let currentRisk = "balanced";  // "safe", "balanced", "aggressive"
-    let currentProj = "model";    // "model" or "sleeper"
+    let currentProj = "sleeper";  // "model" or "sleeper"
     let currentValueMode = "vbd_score";  // "vorp", "vona", "vols", "vbd_score"
     let currentSort = "value";  // "value", "adp", or "rank"
     // CR opus: Hardcoded NFL positions here, but initSportUI() resets them dynamically.

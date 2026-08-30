@@ -82,7 +82,7 @@ class DraftSession:
     sim_cancel: asyncio.Event = field(default_factory=asyncio.Event)
     sim_snapshot: dict | None = None
     # Projection source
-    projection_source: str = "model"  # "model", "sleeper", or "fangraphs"
+    projection_source: str = "sleeper"  # "model", "sleeper", or "fangraphs"
     sleeper_projections_matched: int = 0  # how many players have Sleeper data
     fangraphs_projections_matched: int = 0  # how many players have FanGraphs data
     # Manual draft mode
@@ -215,7 +215,7 @@ def _compute_adp_order(players: list[Player], platform: str, sport: str = "nfl")
 
 def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
                          skip_recommendations=False, risk_profile="balanced",
-                         projection_source="model"):
+                         projection_source="sleeper"):
     """Build the JSON payload describing current draft state."""
     config = state.config
     is_complete = state.is_complete
@@ -624,9 +624,13 @@ async def connect_draft(
     sess.last_meta_refresh = time.monotonic()
     sess.connected = True
     sess.adp_platform = "consensus"
-    sess.adp_order = _compute_adp_order(players, "consensus", sport="nfl")
     sess.last_activity = time.monotonic()
     sess.sleeper_projections_matched = sleeper_matched
+    if sleeper_matched:
+        swap_projection_source(players, "sleeper")
+    else:
+        sess.projection_source = "model"
+    sess.adp_order = _compute_adp_order(players, "consensus", sport="nfl")
 
     payload = _build_state_payload(
         state, meta, picks, slot_0, players, sess.adp_order,
@@ -758,7 +762,7 @@ async def change_slot(
 @app.post("/api/projections")
 async def set_projection_source(
     session_id: str = Query(..., description="Session ID"),
-    source: str = Query("model", description="Projection source: model, sleeper, or fangraphs"),
+    source: str = Query("sleeper", description="Projection source: model, sleeper, or fangraphs"),
 ):
     """Switch between model, Sleeper, and FanGraphs projections."""
     sess = _get_session(session_id)
@@ -1034,10 +1038,14 @@ async def create_manual_draft(
     sess.draft_state = state
     sess.connected = True
     sess.adp_platform = "consensus"
-    sess.adp_order = _compute_adp_order(players, "consensus", sport=sport)
     sess.last_activity = time.monotonic()
     sess.sleeper_projections_matched = sleeper_matched
     sess.fangraphs_projections_matched = fangraphs_matched
+    if sport == "nfl" and sleeper_matched:
+        swap_projection_source(players, "sleeper")
+    elif sport == "mlb":
+        sess.projection_source = "model"
+    sess.adp_order = _compute_adp_order(players, "consensus", sport=sport)
 
     meta = {"status": "complete" if state.is_complete else "in_progress"}
     payload = _build_state_payload(
