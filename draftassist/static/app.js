@@ -470,7 +470,7 @@
             cls: "sortable",
             render: (r, ctx) => {
                 const v = r[ctx.valueMode];
-                return v != null && v > 0 ? v.toFixed(1) : "—";
+                return v != null && Number.isFinite(Number(v)) ? Number(v).toFixed(1) : "—";
             },
         },
         {

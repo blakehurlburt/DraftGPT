@@ -601,10 +601,14 @@ class TestRecommendationTableUI:
         assert 'cls: "sortable active"' not in rec_columns_source
         assert 'c.sortKey && c.sortKey === ctx.currentSort' in source
 
+    def test_value_column_displays_non_positive_scores(self, rec_columns_source):
+        assert "v > 0" not in rec_columns_source
+        assert "Number.isFinite(Number(v))" in rec_columns_source
+
     def test_app_script_cache_key_was_bumped(self):
         html = Path("draftassist/static/index.html").read_text()
         assert 'data-value="strategy_score"' in html
-        assert '<script src="/static/app.js?v=18"></script>' in html
+        assert '<script src="/static/app.js?v=19"></script>' in html
 
 
 # ---------------------------------------------------------------------------
