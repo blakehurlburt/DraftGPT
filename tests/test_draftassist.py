@@ -532,6 +532,22 @@ class TestManualPayload:
         assert payload["current_pick"] == 1
         assert payload["num_teams"] == small_config.num_teams
 
+    def test_player_rankings_include_drafted_players(self, sample_players, small_config):
+        """UI ranking must use the full pool, not renumber available players."""
+        from draftassist.app import _build_state_payload
+
+        state = DraftState.create(small_config, sample_players)
+        drafted = state.available.pop(0)
+        payload = _build_state_payload(
+            state, {"status": "in_progress"}, [], user_slot=0,
+            players=sample_players, skip_recommendations=True,
+        )
+
+        rankings = payload["player_rankings"]
+        assert rankings[0]["name"] == drafted.name
+        assert [p["name"] for p in rankings] == [p.name for p in sample_players]
+        assert all(set(p) == {"name", "position", "is_rookie"} for p in rankings)
+
 
 # ---------------------------------------------------------------------------
 # Manual draft creation endpoint (error handling)

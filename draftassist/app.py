@@ -333,6 +333,17 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
                 "adp": adp_rank.get(p.name, 999),
             })
 
+    # Keep drafted players in the ranking universe so the UI can show each
+    # available player's rank within the active position/rookie filters.
+    player_rankings = [
+        {
+            "name": p.name,
+            "position": p.position,
+            "is_rookie": p.is_rookie,
+        }
+        for p in sorted(players, key=lambda p: p.projected_total, reverse=True)
+    ]
+
     return {
         "current_pick": current_pick,
         "total_picks": config.total_picks,
@@ -357,6 +368,7 @@ def _build_state_payload(state, meta, picks, user_slot, players, adp_order=None,
         # be True when projection_source == "fangraphs".
         "floor_estimated": projection_source == "sleeper",
         "available_rookies": available_rookies,
+        "player_rankings": player_rankings,
     }
 
 

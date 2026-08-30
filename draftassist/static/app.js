@@ -458,10 +458,10 @@
 
     const REC_COLUMNS = [
         {
-            key: "rank", label: "#", sortKey: "rank",
-            title: "Strategy recommendation rank (click to sort)",
+            key: "rank", label: "#", sortKey: "display_rank",
+            title: "Projection rank within the active filters (click to sort)",
             cls: "sortable",
-            render: (r) => r.rank,
+            render: (r) => r.display_rank ?? "—",
         },
         {
             key: "name", label: "Player",
@@ -1167,6 +1167,12 @@
         const floorEstimated = !!(state.floor_estimated);
         const ctx = { showSim: !!simData, currentStrategy, getSimValue, valueMode: currentValueMode, floorEstimated };
 
+        const filteredRank = new Map();
+        for (const player of state.player_rankings || []) {
+            if (!posFilters.has(player.position) || (rookieOnly && !player.is_rookie)) continue;
+            filteredRank.set(player.name, filteredRank.size + 1);
+        }
+
         // Render header (updates value label, sim column visibility)
         renderTableHeader(REC_COLUMNS, $("#rec-head"), ctx);
         updateValueHeader();
@@ -1199,7 +1205,9 @@
         }
 
         // Apply position filter first, then cap to displayCount
-        let filtered = pool.filter((r) => posFilters.has(r.position) && (!rookieOnly || r.is_rookie));
+        let filtered = pool
+            .filter((r) => posFilters.has(r.position) && (!rookieOnly || r.is_rookie))
+            .map((r) => ({ ...r, display_rank: filteredRank.get(r.name) }));
 
         // Apply sort
         // CR opus: When sorting by ADP, players with adp=999 or adp=undefined (undrafted/no ADP)
@@ -1211,7 +1219,9 @@
             const key = currentValueMode;
             filtered = filtered.slice().sort((a, b) => (b[key] || 0) - (a[key] || 0));
         } else {
-            filtered = filtered.slice().sort((a, b) => a.rank - b.rank);
+            filtered = filtered.slice().sort(
+                (a, b) => (a.display_rank ?? Infinity) - (b.display_rank ?? Infinity)
+            );
         }
 
         // Cap to displayCount visible rows
