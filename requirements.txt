@@ -12,3 +12,5 @@ uvicorn
 httpx
 sse-starlette
 yfpy
+# Floor: older bundles still trust the compromised eMudhra intermediates (Render advisory 2026-10-19)
+certifi>=2026.10.19
